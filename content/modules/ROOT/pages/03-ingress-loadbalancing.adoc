@@ -1,0 +1,355 @@
+= Ingress とロードバランシング
+:page-toclevels: 1
+
+**所要時間:** 25 分 +
+**形式:** ハンズオンでの Ingress 設定
+
+include::partial$console-access.adoc[]
+
+== シナリオ
+
+アプリケーションがデプロイされ、稼働しています。しかし、外部からのトラフィックはどのようにして実際に届くのでしょうか？このモジュールでは、Ingress Controller を調査し、TLS を使用した Route（ルート）を作成した上で、負荷時のレート制限、HTTP から HTTPS への強制リダイレクト、セキュリティヘッダーなどを用いて保護を行います。テスト前後の挙動を検証することで、各設定が正しく機能していることを証明します。
+
+image::diagrams/03_ingress.png[OpenShift Ingress Load Balancer Flow, align=center, link=self, window=blank]
+== Ingress Controller とロードバランシング
+
+**Ingress Controller**（デフォルトは HAProxy。他の Ingress Controller も使用可能）は、クラスターに入る HTTP/S トラフィックを処理できます。
+
+=== Ingress Controller 設定の表示
+
+[source,bash,role="execute"]
+----
+oc get ingresscontroller default -n openshift-ingress-operator -o yaml | head -60
+----
+
+主な設定オプション：
+
+* `replicas` - 高可用性（HA）のためのルーター Pod の数
+* `routeAdmission.wildcardPolicy` - ワイルドカード Route が許可されるかどうか
+* `defaultCertificate` - *.apps ドメイン用の TLS 証明書
+* `endpointPublishingStrategy` - ルーターの公開方法（HostNetwork、LoadBalancer、NodePort）
+
+=== ルーター Pod の表示
+
+[source,bash,role="execute"]
+----
+oc get pods -n openshift-ingress -o wide
+----
+
+ルーター Pod は、着信する HTTP/HTTPS トラフィックを処理します。このクラスターでは、HostNetwork を使用してコントロールプレーンノード上で実行されているため、ポート 80 および 443 でノードのネットワークインターフェースに直接バインドされます。
+
+**OCP Console** の **Workloads -> Pods** でもこれらを確認できます。プロジェクトドロップダウンで **Show default projects**（デフォルトプロジェクトの表示）を有効にし、`openshift-ingress` を選択します：
+
+image::ingress-images/ingress-router-pods.png[Router pods in the openshift-ingress namespace, link=self, window=blank]
+=== Endpoint Publishing Strategy の確認
+
+[source,bash,role="execute"]
+----
+oc get ingresscontroller default -n openshift-ingress-operator -o jsonpath='{.status.endpointPublishingStrategy}' | jq . 2>/dev/null || oc get ingresscontroller default -n openshift-ingress-operator -o jsonpath='{.status.endpointPublishingStrategy}' | python3 -m json.tool
+----
+
+== Routes: OpenShift の Ingress リソース
+
+OpenShift の **Routes** は、サービスを外部に公開します。Kubernetes の Ingress よりも機能が豊富です。
+
+=== アプリケーションのセットアップ
+
+このセクションではテストアプリケーションを使用します。以下を実行して、プロジェクトとアプリの準備が整っていることを確認します：
+
+[source,bash,role="execute"]
+----
+oc new-project ingress-demo 2>/dev/null || oc project ingress-demo && \
+oc get deployment test-app -n ingress-demo 2>/dev/null || \
+oc new-app --name=test-app --image=registry.access.redhat.com/ubi9/httpd-24 -n ingress-demo
+----
+
+NOTE: ターミナルに Pod のステータスがストリーミング表示される場合は、**Ctrl+C** を押してプロンプトに戻してください。
+
+[source,bash,role="execute"]
+----
+oc create route edge test-app --service=test-app 2>/dev/null || echo "Route already exists"
+----
+
+Pod の準備ができるまで待ちます：
+
+[source,bash,role="execute"]
+----
+oc rollout status deployment/test-app -n ingress-demo --timeout=60s
+----
+
+NOTE: 完了までに 1 分程度かかる場合があります。5 分以上実行されている場合のみ **Ctrl+C** を押してください。
+
+次に、そのネットワークを検査しましょう。**OCP Console** で **Networking -> Routes**（プロジェクト: `ingress-demo`）に移動します。`test-app` の Route とそのステータス、クリック可能な URL、およびターゲットサービスが表示されます：
+
+image::ingress-images/ingress-weathernow-route.png[test-app route in the console, link=self, window=blank]
+Route 名をクリックすると、TLS 設定やルーター情報などの完全な詳細が表示されます：
+
+image::ingress-images/ingress-route-details.png[test-app route details showing TLS edge termination, link=self, window=blank]
+=== Route 設定の表示
+
+[source,bash,role="execute"]
+----
+oc get route test-app -o yaml
+----
+
+主な Route フィールド：
+
+* `spec.host` - 外部ホスト名
+* `spec.to.name` - バックエンドの Service
+* `spec.tls.termination` - TLS 終端タイプ（この場合は edge）
+
+=== Route のテスト
+
+HTTPS（edge TLS）でテストします：
+
+[source,bash,role="execute"]
+----
+curl -sk https://$(oc get route test-app -o jsonpath='{.spec.host}') | head -5
+----
+
+このリクエストのフロー：**クライアント -> Ingress Controller -> Service -> Pod**
+
+Web サーバーから返された HTML（デフォルトのテストページ）が表示されるはずです。
+
+== TLS 終端戦略
+
+OpenShift Routes は、3 つの TLS 終端タイプをサポートしています：
+
+[cols="1,2,2"]
+|===
+|タイプ |説明 |ユースケース
+
+|**edge**
+|TLS はルーターで終端し、Pod へのトラフィックは HTTP になる
+|最も一般的。ルーターが証明書を処理する。
+
+|**passthrough**
+|TLS は変更されずに Pod にそのまま通過する
+|アプリケーション自体が証明書を管理する
+
+|**reencrypt**
+|TLS はルーターで終端し、Pod へは新しい TLS を使用する
+|ルーター証明書の検証を伴うエンドツーエンド暗号化
+|===
+
+=== TLS 設定の検査
+
+Edge Route の TLS 設定を表示します：
+
+[source,bash,role="execute"]
+----
+oc get route test-app -o jsonpath='{.spec.tls}' | jq . 2>/dev/null || oc get route test-app -o jsonpath='{.spec.tls}' | python3 -m json.tool
+----
+
+Edge 終端の意味：
+
+* TLS は Ingress Controller (HAProxy) で終端する
+* ルーターから Pod へのトラフィックは暗号化されていない HTTP になる
+* ルーターはクラスターのワイルドカード証明書を使用する
+
+=== クラスター全体の Route の表示
+
+[source,bash,role="execute"]
+----
+oc get routes -A | head -20
+----
+
+異なる終端タイプ（`edge`、`passthrough`、`reencrypt`）に注目してください。
+
+**OCP Console** で **Networking -> Routes** に移動し（**All Projects** を選択）、クラスター全体のすべての Route を表示します：
+
+image::ingress-images/ingress-routes-all.png[All routes across the cluster with TLS termination badges, link=self, window=blank]
+== 高度な設定
+
+=== Route の保護
+
+Route は、レート制限、セキュリティヘッダー、および HTTP 動作を制御するアノテーションをサポートしています。これらを適用し、正しく動作することを証明しましょう。
+
+**HTTP から HTTPS へのリダイレクト**
+
+デフォルトでは、Edge Route への HTTP リクエストは汎用的な 503 ページを受け取ります。本番環境では、HTTP が自動的に HTTPS にリダイレクトされるようにします。
+
+現在の HTTP の動作をテストします：
+
+[source,bash,role="execute"]
+----
+curl -sk -o /dev/null -w "HTTP request: %{http_code}\n" "http://$(oc get route test-app -o jsonpath='{.spec.host}')"
+----
+
+リダイレクトを有効にします：
+
+[source,bash,role="execute"]
+----
+oc patch route test-app -n ingress-demo --type=merge \
+  -p '{"spec":{"tls":{"insecureEdgeTerminationPolicy":"Redirect"}}}'
+----
+
+[source,bash,role="execute"]
+----
+sleep 3
+ROUTE_HOST=$(oc get route test-app -o jsonpath='{.spec.host}')
+echo "HTTP request (should 302 redirect):"
+curl -sk -o /dev/null -w "  Status: %{http_code} → %{redirect_url}\n" "http://$ROUTE_HOST"
+echo "Following the redirect:"
+curl -skL -o /dev/null -w "  Status: %{http_code}\n" "http://$ROUTE_HOST"
+----
+
+`302` は、HTTP が HTTPS にリダイレクトされていることを確認するものです。リダイレクトを追跡した後の `403` はアプリの正常な応答です（カスタムコンテンツがデプロイされていないため、デフォルトの httpd テストページは 403 を返します）。重要なのはリダイレクト自体であり、HTTP トラフィックは暗号化されないままで提供されなくなりました。
+
+`insecureEdgeTerminationPolicy` の 3 つのオプション：
+
+* **Redirect** - HTTPS へ HTTP 302 リダイレクト（推奨）
+* **None** - HTTP を完全に拒否 (503)
+* **Allow** - HTTP 上でもコンテンツを提供する（非推奨）
+
+**HSTS (HTTP Strict Transport Security)**
+
+HSTS は、ユーザーが `http://` と入力した場合でも、常に HTTPS を使用するようにブラウザに指示します。これによりダウングレード攻撃を防ぎます。
+
+現在のレスポンスヘッダーを確認します。まだ有効にしていないため、`No HSTS header` と表示されるはずです：
+
+[source,bash,role="execute"]
+----
+curl -sk -D - "https://$(oc get route test-app -o jsonpath='{.spec.host}')" 2>&1 | grep -i strict || echo "No HSTS header"
+----
+
+HSTS を適用します：
+
+[source,bash,role="execute"]
+----
+oc annotate route test-app -n ingress-demo \
+  haproxy.router.openshift.io/hsts_header="max-age=31536000;includeSubDomains" --overwrite
+----
+
+[source,bash,role="execute"]
+----
+sleep 3
+curl -sk -D - "https://$(oc get route test-app -o jsonpath='{.spec.host}')" 2>&1 | grep -i strict
+----
+
+すべてのレスポンスに `strict-transport-security` ヘッダーが含まれるようになりました。これを確認したブラウザは、このドメインに対して 1 年間（`max-age=31536000`）HTTP の使用を拒否します。
+
+**負荷時のレート制限**
+
+同時接続数を制限するためにレート制限を適用します：
+
+[source,bash,role="execute"]
+----
+oc annotate route test-app -n ingress-demo \
+  haproxy.router.openshift.io/rate-limit-connections=true \
+  haproxy.router.openshift.io/rate-limit-connections.concurrent-tcp=2 \
+  haproxy.router.openshift.io/rate-limit-connections.rate-http=10 \
+  --overwrite
+----
+
+アノテーションは設定されましたが、実際に機能しているでしょうか？それを証明しましょう。20 件の同時リクエストを送信します：
+
+[source,bash,role="execute"]
+----
+echo "=== With rate limiting (max 2 concurrent) ==="
+ROUTE_HOST=$(oc get route test-app -o jsonpath='{.spec.host}')
+sleep 5
+RESULTS=""
+for i in $(seq 1 20); do
+  curl -sk -o /dev/null -w "%{http_code}\n" "https://$ROUTE_HOST" &
+done
+wait 2>/dev/null
+----
+
+NOTE: 出力がハングした場合は、**Ctrl+C** を押してプロンプトに戻してください。
+
+`403`（リクエストがアプリに到達）と `000`（アプリに到達する前に HAProxy によって接続が切断）が混ざって表示されます。`000` レスポンスは、ルーターが同時実行制限を超えた接続を切断していることを証明しています。
+
+NOTE: `403` と `000` レスポンスの正確な割合は、タイミングやシステム負荷に応じて実行ごとに異なります。
+
+ここでレート制限を削除し、同じテストを試みます：
+
+[source,bash,role="execute"]
+----
+oc annotate route test-app -n ingress-demo \
+  haproxy.router.openshift.io/rate-limit-connections- \
+  haproxy.router.openshift.io/rate-limit-connections.concurrent-tcp- \
+  haproxy.router.openshift.io/rate-limit-connections.rate-http-
+----
+
+[source,bash,role="execute"]
+----
+echo "=== Without rate limiting ==="
+sleep 5
+for i in $(seq 1 20); do
+  curl -sk -o /dev/null -w "%{http_code}\n" "https://$(oc get route test-app -o jsonpath='{.spec.host}')" &
+done
+wait 2>/dev/null
+----
+
+NOTE: 出力がハングした場合は、**Ctrl+C** を押してプロンプトに戻してください。
+
+すべて `403` になります。すべてのリクエストがアプリに到達します（httpd のデフォルトページは 403 を返しますが、これは想定どおりです）。`000` レスポンスがないことは、接続がドロップされなかったことを意味します。HAProxy が積極的に接続をドロップしていた前のテストと比較してください。これが 1 つのアノテーションによる違いです。
+
+=== Ingress Controller のスケーリング
+
+Ingress Controller は、IngressController CR の `spec.replicas` を変更することでスケーリングできます。レプリカを追加すると、外部 Ingress ロードバランサーの背後に配置されるルーターが増え、スループットが向上します。
+
+このコンパクトなクラスターでは、ノードごとに 1 つのルーターがすでに上限となっています。スケールアップすると Pod が Pending のままになり（アンチアフィニティにより同じノード上に 2 つのルーターが配置されるのを防ぐため）、スケールダウンするとルーターを失ったノード上でトラフィックがドロップされます。
+
+[source,bash,role="execute"]
+----
+echo "Current replicas: $(oc get ingresscontroller default -n openshift-ingress-operator -o jsonpath='{.spec.replicas}')"
+echo "Router pods:"
+oc get pods -n openshift-ingress -o wide
+----
+
+本番のクラウド環境では、以下のようにスケールします：
+
+[source,bash,role="copypaste"]
+----
+# Example - not run on this cluster
+oc patch ingresscontroller default -n openshift-ingress-operator --type=merge -p '{"spec":{"replicas":5}}'
+----
+
+Ingress コントローラーの健全性は、コンソールの **Administration → Cluster Settings → ClusterOperators** で **ingress** をクリックすることで確認できます。
+
+image::ingress-images/ingress-operator-conditions.png[Ingress operator conditions showing Available, Progressing, Degraded status, link=self, window=blank]
+== クリーンアップとまとめ
+
+[source,bash,role="execute"]
+----
+# Remove annotations and reset route
+oc annotate route test-app -n ingress-demo \
+  haproxy.router.openshift.io/hsts_header- \
+  haproxy.router.openshift.io/rate-limit-connections- \
+  haproxy.router.openshift.io/rate-limit-connections.concurrent-tcp- \
+  haproxy.router.openshift.io/rate-limit-connections.rate-http- 2>/dev/null
+oc patch route test-app -n ingress-demo --type=merge \
+  -p '{"spec":{"tls":{"insecureEdgeTerminationPolicy":""}}}' 2>/dev/null
+echo "Cleanup complete"
+----
+
+=== まとめ
+
+**学んだこと：**
+
+* Ingress Controller (HAProxy) は HostNetwork 上で外部トラフィックを処理する
+* Route は TLS 終端オプション（edge、passthrough、reencrypt）を使用してサービスを公開する
+* `insecureEdgeTerminationPolicy: Redirect` は HTTPS を強制する
+* HSTS ヘッダーはブラウザのダウングレード攻撃を防止する
+* レート制限は接続フラッドから Route を保護し、その正常な動作を確認した
+
+**主要な運用コマンド:**
+
+[source,bash]
+----
+# Ingress Controller の確認
+oc get ingresscontroller -n openshift-ingress-operator
+
+# Route の表示
+oc get routes -A
+
+# ルーター Pod の表示
+oc get pods -n openshift-ingress -o wide
+----
+
+=== 追加リソース
+
+* **Ingress Controller:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/networking/configuring-ingress-cluster-traffic[Configuring ingress cluster traffic, window=blank]
+* **Route アノテーション:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/networking/configuring-ingress-cluster-traffic#nw-route-specific-annotations_route-configuration[Route-specific annotations, window=blank]

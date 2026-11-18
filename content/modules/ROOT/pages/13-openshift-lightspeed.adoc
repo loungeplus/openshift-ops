@@ -1,0 +1,257 @@
+= OpenShift Lightspeed
+:page-toclevels: 1
+
+== モジュールの概要
+
+**所要時間:** 15〜20 分 +
+**形式:** ハンズオンでの AI アシスタント探索 +
+**対象者:** プラットフォームエンジニア、開発者、運用チーム
+
+include::partial$console-access.adoc[]
+
+OpenShift Lightspeed (OLS) は、OpenShift Web コンソールに統合された AI 搭載のアシスタントです。大規模言語モデル (LLM) の機能と、検索拡張生成 (RAG) を介した OpenShift の公式ドキュメントを組み合わせ、管理者や開発者の以下のような作業を支援します：
+
+* OpenShift の概念やアーキテクチャの理解
+* 構成に関するガイダンスの取得
+* YAML 生成の支援
+* クラスター障害のトラブルシューティング
+
+このモジュールでは、OpenShift Lightspeed を設定し、それを使用して OpenShift の概念の理解、クラスターリソースからの情報収集、故障したワークロードのトラブルシューティングなどを行います。
+
+=== 事前条件
+
+OpenShift Lightspeed オペレーターはお使いのクラスターに事前インストールされています。ただし、完全に機能させるには、OpenShift Lightspeed を LLM プロバイダーに接続する必要があります。このモジュールでは、この接続を有効にするために必要な設定も作成します。
+
+image::diagrams/13_lightspeed.png[OpenShift Lightspeed Architecture, align=center, link=self, window=blank]
+== OpenShift Lightspeed のデプロイ
+
+=== オペレーターインストールの検証
+
+まず、OpenShift Lightspeed オペレーターがインストールされていることを確認します：
+
+[source,bash,role=execute]
+----
+oc get csv -n openshift-lightspeed | grep lightspeed
+----
+
+オペレーターが `Succeeded` フェーズになっていることが確認できるはずです。
+
+コンソールでも、*Ecosystem* → *Installed Operators* に移動して確認できます。プロジェクトのドロップダウンで **Show default projects** をオンにし、`openshift-lightspeed` ネームスペースを選択してください：
+
+image::ols-operator-installed.png[OpenShift Lightspeed Operator Installed, link=self, window=blank]
+ネームスペースを切り替えるには、上部のドロップダウンを使用します：
+
+image::ols-switch-namespace.png[Switch to openshift-lightspeed namespace, link=self, window=blank]
+=== OLSConfig の作成（Create the OLSConfig）
+
+オペレーターはインストールされていますが、LLM プロバイダーに接続するための設定が必要です。OpenShift Lightspeed は、パブリッククラウドサービス (WatsonX、Azure OpenAI、OpenAI) やオンプレミスソリューション (Red Hat OpenShift AI、RHEL AI) など、さまざまなモデルプロバイダーをサポートしています。このワークショップでは、Azure OpenAI の認証情報が Secret として事前に設定されています。
+
+認証情報の Secret が存在することを確認します：
+
+[source,bash,role=execute]
+----
+oc get secret azure-api-keys -n openshift-lightspeed
+----
+
+次に、OpenShift Lightspeed を有効にするための OLSConfig を作成します：
+
+[source,bash,subs="+macros,+attributes",role=execute]
+----
+oc apply -f - <<EOF
+apiVersion: ols.openshift.io/v1alpha1
+kind: OLSConfig
+metadata:
+  name: cluster
+spec:
+  llm:
+    providers:
+      - name: Azure
+        type: azure_openai
+        url: 'https://llm-gpt4-lightspeed.openai.azure.com/'
+        deploymentName: gpt-4
+        credentialsSecretRef:
+          name: azure-api-keys
+        models:
+          - name: gpt-4
+  ols:
+    defaultModel: gpt-4
+    defaultProvider: Azure
+    logLevel: DEBUG
+    introspectionEnabled: true
+EOF
+----
+
+主な設定パラメーター：
+
+* `spec.llm.providers` - 使用する LLM プロバイダーを定義します：
+** `type` - プロバイダーのタイプ (例: `azure_openai`、`watsonx`、`rhoai_vllm` など)
+** `url` - LLM サービスの端点 URL
+** `credentialsSecretRef` - API 認証情報を含む Secret を参照します
+** `models` - このプロバイダーから使用するモデル名
+* `spec.ols.defaultModel` - クエリに対してデフォルトで使用するモデルを指定します
+* `spec.ols.defaultProvider` - 複数が設定されている場合のデフォルトプロバイダーを設定します
+* `spec.ols.introspectionEnabled` - `true` に設定すると、OpenShift Lightspeed は自動的に MCP サーバーをデプロイし、ユーザーがクラスターリソースを照会してコンテキストを意識した回答を提供できるようにします (OpenShift 4.20 のテクノロジープレビュー)
+
+=== OpenShift Lightspeed の初期化待機
+
+TLS 証明書が生成されコンテナイメージがプルされる間、Lightspeed Pod の起動には 3〜5 分かかります。このコマンドは、すべての準備が整うまで待機します：
+
+[source,bash,role="execute"]
+----
+echo "Waiting for Lightspeed to start (this takes 3-5 minutes)..."
+ELAPSED=0
+until oc get pods -n openshift-lightspeed -l app.kubernetes.io/component=application-server --no-headers 2>/dev/null | grep -q "3/3.*Running"; do
+  sleep 10; ELAPSED=$((ELAPSED+10))
+  [ $ELAPSED -ge 600 ] && echo "ERROR: Timed out after 10 minutes" && break
+done
+echo "Lightspeed is ready"
+oc get pods -n openshift-lightspeed
+----
+
+すべての Pod が `Running` と表示されるはずです：
+
+----
+NAME                                                     READY   STATUS    RESTARTS        AGE
+lightspeed-app-server-xxxxx                              3/3     Running   0               3m
+lightspeed-console-plugin-xxxxx                          1/1     Running   0               3m
+lightspeed-operator-controller-manager-xxxxx              1/1     Running   0               83m
+lightspeed-postgres-server-xxxxx                         1/1     Running   1               3m
+----
+
+NOTE: postgres Pod は 1 回の再起動を表示する場合がありますが、これは初期起動時の正常な動作です。
+
+OLSConfig のステータスを確認します：
+
+[source,bash,role=execute]
+----
+oc get olsconfig cluster -o jsonpath='{.status.conditions}' | jq .
+----
+
+すべての条件で `"status": "True"` および `"message": "Ready"` が表示される必要があります。
+
+== Lightspeed の使用
+
+=== Web コンソールでの OpenShift Lightspeed へのアクセス
+
+Lightspeed のデプロイ中にコンソールからログアウトされた可能性があります。その場合は、以下で再度ログインしてください：
+
+* ユーザー名: `{openshift_cluster_admin_username}`
+* パスワード: `{openshift_cluster_admin_password}`
+
+TIP: Lightspeed の使用時に認証エラーが表示された場合は、**OCP Console** タブを再読み込みして再試行してください。
+
+OLSConfig の準備が整うと、右下隅にある OpenShift Lightspeed のチャットボタンが機能するようになります：
+
+image::ols-chat-button.png[Lightspeed chat button in bottom right, link=self, window=blank]
+ボタンをクリックして OpenShift Lightspeed のチャットウィンドウを開きます：
+
+image::ols-chat-window.png[OpenShift Lightspeed chat window, link=self, window=blank]
+=== 最初の質問
+
+OpenShift Lightspeed を使用すると、ユーザーは自然言語を使用して OpenShift についてやり取りし、質問することができます。OpenShift に関する特定の知識を備えているため、このプラットフォームの概念やリソースを探索して理解するのに特に役立ちます。
+
+NOTE: Lightspeed の回答は AI モデルによって生成されるため、出力結果が表示されている例と異なる場合があります。
+
+たとえば、次のように質問することから始めることができます：
+
+[quote]
+What's the difference between a Deployment and a StatefulSet?
+
+OpenShift Lightspeed は、ベクターデータベースからドキュメントの最も関連性の高いセクションを検索します。この情報はクエリとともにモデルに送信され、正確な回答を提供できるようになります。
+
+OpenShift Lightspeed は、Deployment リソースと StatefulSet リソースの両方が何であるかを説明し、それらの比較を含む回答を提供する可能性が高いです。回答の最後までスクロールすると、OpenShift Lightspeed は最も関連性の高いドキュメントへのリンクを表示し、それらのセクションに迅速にアクセスしてさらに探索できるようにします：
+
+image::ols-related-docs.png[Related documentation in OpenShift Lightspeed, link=self, window=blank]
+== 機能
+
+=== YAML 生成支援
+
+OpenShift Lightspeed は現在の会話のコンテキストを維持するため、追加の質問をして以前の回答を洗練させたり拡大させたりすることができます。
+
+たとえば、Deployment が何であるかがわかったので、OpenShift Lightspeed に作成を依頼してみましょう：
+
+[quote]
+Can you generate a YAML for a Deployment using the image red.ht/ols:2026?
+
+OpenShift Lightspeed はガイダンスを提供し、要求されたリソースを作成しますが、それらのリソースをクラスターに直接適用することはありません。これらをコピーして手動で適用できます：
+
+image::ols-copy-yaml.png[Copy YAML button in OpenShift Lightspeed, link=self, window=blank]
+=== クラスターとのやり取りとトラブルシューティング
+
+ワークショップセットアップの一環として、意図的な問題を伴うデモ Pod が事前デプロイされています。OpenShift Lightspeed を使用してこれを診断してみましょう。
+
+まず、故障した Pod を確認します：
+
+[source,bash,role=execute]
+----
+oc get pods -n lightspeed-demo
+----
+
+Pod が `Pending` 状態で停止しているのが確認できます：
+
+[source,bash,role=execute]
+----
+oc describe pod broken-pod -n lightspeed-demo
+----
+
+コマンドラインから取得したのと同じ情報を、OpenShift Lightspeed からリクエストすることもできます。思い返すと、OLSConfig を設定した際、`introspectionEnabled` を `true` に設定しました。これは、OpenShift Lightspeed がクラスター内のリソースにアクセスできることを意味します。
+
+OpenShift Lightspeed のインターフェースで、**ゴミ箱アイコン** (チャットパネルの右上隅、左側) をクリックして会話を消去します。これで、次のように質問できます：
+
+[quote]
+Show me the pods in the lightspeed-demo namespace
+
+モデルは、この情報を取得するために MCP サーバーによって提供されるツールの 1 つである `pods_list_in_namespace` を使用した可能性が高いです。ツールをクリックすると、質問の回答に使用されたツールの出力を表示できます。
+
+image::ols-tool-output.png[OpenShift Lightspeed MCP tool output, link=self, window=blank]
+次に、OpenShift Lightspeed を使用して問題の診断を支援しましょう。OpenShift Lightspeed によるトラブルシューティングでは、添付機能を使用してさまざまなリソースや設定をモデルに渡して分析させ、問題の特定と解決に役立てることができます。
+
+OpenShift Web コンソールで、*Workloads* → *Pods* に移動し、`lightspeed-demo` ネームスペースにいることを確認します。以前に OpenShift Lightspeed が一覧表示した Pod が見つかります。`broken-pod` をクリックしてリソースの詳細を表示します。
+
+ここで、チャットウィンドウの入力バーの隣にある **クリップ** アイコンをクリックすると、異なるコンポーネントを添付できるメニューが表示されます。**Full YAML file** を選択します：
+
+image::ols-attachments.png[OpenShift Lightspeed attachments menu, link=self, window=blank]
+添付できたら、次のように尋ねてみてください：
+
+[quote]
+What's wrong in this pod?
+
+OpenShift Lightspeed は Pod 仕様を分析して問題を特定します（この場合は無効なノードセレクター）。さらに、問題を解決するのに役立つソリューションを提案する可能性が高いです。
+
+=== コンテナにとどまらない OpenShift Lightspeed
+
+このモジュールを通じて、OpenShift Lightspeed が Pod、Deployment、Route、Service などのコンテナベースのワークロードにどのように役立つかを見てきました。ただし、OpenShift プラットフォームはコンテナにとどまりません。
+
+OpenShift Virtualization を使用すると、コンテナと同じプラットフォーム上で仮想マシンを実行できます。OpenShift の VM はカスタムリソースとして管理されるため、OpenShift Lightspeed はコンテナと同様に効果的に支援できます。VM ネットワークの概念の理解から、起動に関する問題のトラブルシューティング、仮想マシン構成の生成まで、OpenShift Lightspeed はすぐに役立ちます。
+
+同じことが Red Hat Advanced Cluster Management (ACM) にも当てはまります。複数のクラスターにまたがって作業する場合、ManagedCluster や ManagedClusterInfo などのリソースは同じカスタムリソースパターンに従うため、OpenShift Lightspeed からクエリやガイダンスを利用できます。
+
+このモジュールはここで終了しますが、OpenShift Lightspeed オペレーターはワークショップの残りの期間もアクティブなままです。今後のモジュールを進めながら、必要に応じて概念の明確化、リソース定義の生成、仮想マシンやマルチクラスターのタスクの支援など、ご自由に使用し続けてください。
+
+== クリーンアップとまとめ
+
+デモネームスペースをクリーンアップします：
+
+[source,bash,role="execute"]
+----
+oc delete namespace lightspeed-demo --ignore-not-found --wait=false
+echo "Cleanup complete - you can continue to the next module"
+----
+
+NOTE: OLSConfig と Lightspeed サービスは引き続き実行されています。以降のモジュールでも Lightspeed を使用し続けたい場合は、そのままにしてください。完全に削除したい場合は、以下を実行します：
+
+[source,bash,role="execute"]
+----
+oc delete olsconfig cluster
+----
+
+OpenShift Lightspeed は、コンソール内で直接 AI 支援による運用を提供します。自然言語によるやり取りを可能にすることで、管理者や開発者が OpenShift における初期の学習曲線を迅速に減らし、一般的な問題の解決時間を短縮することで生産性を向上させるのに役立ちます。
+
+このモジュールでは、以下を行いました：
+
+* OpenShift Lightspeed オペレーターのインストールの検証
+* Azure OpenAI に接続するための OLSConfig の作成
+* OpenShift Lightspeed チャットインターフェースへのアクセス
+* OpenShift Lightspeed を使用した OpenShift の概念の学習、構成の生成、問題のトラブルシューティング
+
+機能の一部のみを紹介しましたが、独自の知識を持ち込む機能 (Bring Your Own Knowledge) や、OpenShift Lightspeed をカスタム MCP に接続する機能など、さらに多くの機能があります。詳細については、 https://www.redhat.com/en/products/interactive-walkthrough/red-hat-openshift-lightspeed[OpenShift Lightspeed product page, window=blank] を参照してください。

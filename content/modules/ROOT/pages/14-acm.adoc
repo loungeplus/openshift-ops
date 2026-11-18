@@ -1,0 +1,444 @@
+= ACM マルチクラスター管理
+
+== モジュールの概要
+
+**所要時間:** 30分 +
+**形式:** ハンズオンラボ +
+**対象者:** プラットフォームエンジニア、インフラストラクチャアーキテクト、IT運用担当者
+
+include::partial$console-access.adoc[]
+
+== 学習目標
+
+このモジュールを完了すると、以下のことができるようになります。
+
+* Advanced Cluster Management (ACM) を使用した複数クラスターの管理
+* 複数リージョンにおけるホスト型コントロールプレーン (HCP) の操作
+* 仮想マシンおよび GitOps ベースのアプリケーションの操作
+* 米国 (US) および 欧州・中東・アフリカ (EMEA) のクラスター間におけるポリシーベースのガバナンスの適用
+
+[[multi-env-clusters]]
+== 複数環境における Red Hat OpenShift クラスターおよび仮想マシンの作成と管理
+
+セットアップから日常運用にいたるまでクラスターを自ら制御することで、ワークロードやデータの配置場所の決定、独自のポリシー設定、およびコンプライアンスの遵守が可能になります。これにより、各種規制への迅速な適応、ビジネスの柔軟性維持、および外部プロバイダーへの依存回避が実現します。クラスターと仮想マシンを柔軟に管理することで、最初からセキュリティとコンプライアンスのニーズに適合したクラウドを構築できます。
+
+[[hub-cluster-overview]]
+=== RHACM 管理クラスターの概要
+
+Red Hat Advanced Cluster Management (RHACM) は、OpenShift クラスターのフリート全体を管理するための、クラウド環境における中央集権的なコントロールプレーンとして機能します。マルチ環境にわたるクラスターライフサイクル管理、仮想マシン管理、ポリシー適用、アプリケーションデプロイ、およびオブザーバビリティ（可視性）のための単一の管理拠点と統一インターフェースを提供します。
+
+=== Kubernetes クラスターの作成と管理
+
+Red Hat Advanced Cluster Management for Kubernetes (RHACM) は、新しい OpenShift クラスターのデプロイと管理を簡素化します。IPI や Assisted Installer などの戦略も利用可能ですが、RHACM はさらに一歩進んで、クラスター作成ウィザードを使用してわずか数クリックで新しいクラスターをデプロイできるようにします。
+
+*最初の演習では、アプリケーションのデプロイ先としてローカル、米国（US）、および EMEA クラスターを揃えるために、EMEA リージョンに新しいクラスターをデプロイします。*
+
+.手順
+. OpenShift コンソールの左上にあるハンバーガーメニュー（3本線）をクリックし、*Fleet Management* -> *Infrastructure* -> *Clusters* を選択します。
++
+image::08-dropdown-menu-fleetM.png[link=self, window=blank, width=100%, Create VM]
++
+[NOTE]
+====
+ドロップダウンが表示されない場合はウィンドウの幅が不足しています。ハンバーガーメニュー（3本線）をクリックしてサイドメニューを表示させてください。
+====
++
+. 次に、画面中央にある *Create cluster* ボタンをクリックします。
++
+image::103-create-cluster.png[link=self, window=blank, width=100%, Create Cluster]
++
+. *Red Hat OpenShift Virtualization* ボタンをクリックします。コントロールプレーンのタイプとして *Hosted* という1つのオプションが表示されます。
++
+image::104-aws-credentials.png[link=self, window=blank, width=100%, AWS Credentials]
++
+NOTE: あらかじめ「Red Hat OpenShift Virtualization」のみがハイライトされていることがわかります。これは、このラボの手順を迅速に進めるために認証情報が保存されていることを示しています。
++
+. *Hosted* オプションをクリックします。
+. *Infrastructure provider credential* は *hcp* のままにします。
+. クラスター名に *hcp-emea* と入力します。
++
+[source,sh,subs="attributes",role="copypaste"]
+----
+hcp-emea
+----
++
+. *Hosted cluster namespace* が *clusters* 空間にあることを確認します。
+. *Cluster Set* に *managed* を選択します。
+. 次に、リリースイメージとして *OpenShift 4.21.0*（または現在の最新の 4.21.x リリースイメージ）を選択します。
+. *Etcd Storage Class* に *ocs-external-storagecluster-ceph-rbd* を選択します。
+. *Controller availability policy* と *Infrastructure availability policy* の双方に *Single replica* を選択します。
+. *Additional Labels* の下に *location=emea* と入力します。
++
+[source,sh,subs="attributes",role="copypaste"]
+----
+location=emea
+----
++
+[NOTE]
+====
+Single replica（シングルレプリカ）は、コンポーネントが高可用性に関連するほとんどの障害境界に対して耐性を持つことを想定していないことを意味します。通常、これは重要なワークロードを1つのレプリカのみで実行し、コンポーネントの完全な停止を許容することを意味します。
+====
++
+. *Next* をクリックして続行します。
++
+image::105-create-cluster-details.png[link=self, window=blank, width=100%, Create Cluster Details]
++
+====
+*次の画面では、ノードプールの名前、プールレプリカの数、コア数、およびメモリをカスタマイズできます。*
+====
++
+. *Node pool name* に `hcp-emea` と入力し、その他の詳細はデフォルトのままにします。
++
+[source,sh,subs="attributes",role="copypaste"]
+----
+hcp-emea
+----
++
+. *Next* をクリックして進みます。
++
+image::106-create-cluster-nodepools.png[link=self, window=blank, width=100%, Create Cluster NodePools]
++
+[NOTE]
+====
+次の画面では、使用するストレージマッピングの種類とその関連変数を構成できます。これらはバックエンドで構成済みであり変更する必要がないため、デフォルトのままにします。
+====
++
+. *Next* をクリックして進みます。
++
+image::107-create-cluster-networking.png[link=self, window=blank, width=100%, Create Cluster Networking]
++
+====
+*最後の Review セクションに到達すると、作成するクラスターの概要が表示されます。*
+====
++
+. 青色の *Create* ボタンをクリックしてデプロイプロセスを開始します。
++
+image::108-create-cluster-summary-create.png[link=self, window=blank, width=100%, Create Cluster Summary Page]
+
+[start=18]
+. RHACM の処理が完了するのを見守ります。UI 上でクラスターの作成プロセスが開始されたことが確認できます。
++
+image::03-cluster-creation.png[link=self, window=blank, width=100%, View New Cluster]
++
+NOTE: この Hosted Control Plane (HCP) クラスターのデプロイには約 5〜10 分かかります。このクラスターは後で使用するため、プロビジョニングを待つ間に次の手順に進んでください。
+
+[[create-manage-vms]]
+
+== RHACM コンソールを使用した仮想マシンの作成と管理
+
+OpenShift Virtualization を備えた Red Hat Advanced Cluster Management (RHACM) は、単一のコンソールからクラスターと VM の統合された Policy-as-Code（コードによるポリシー）駆動型の制御を提供します。リソースへのラベル付け、配置の強制、およびコンプライアンスの自動化が可能になり、異なる管理ツール間を行き来する必要がなくなり、すべてのワークロードにわたって一貫した制御が保証されます。
+
+この演習を完了すると、以下のことができるようになります。
+
+* RHACM の検索 (Search) インターフェースをナビゲートして、フリート全体から仮想マシンリソースを特定する。
+* RHACM の作成ウィザードを使用して新しい仮想マシンをプロビジョニングする。
+* マルチクラスタービューから直接 Day 2 運用（停止、起動、マイグレーション）を実行する。
+
+NOTE: あらかじめ *rhel-webserver* という仮想マシンがデプロイされていることにお気づきかもしれません。このマシンは以降の演習で使用します。削除したり電源をオフにしたりすると他のモジュールに影響を与えるため、そのままにしてください。
+
+=== RHACM コンソールを使用した仮想マシンのデプロイ
+
+.手順
+. ハンバーガーメニューのドロップダウンを使用して、*Fleet Virtualization* を選択してクリックします。
++
+image::08-dropdown-menu.png[link=self, window=blank, width=100%, Create VM]
++
+. *Create* ドロップダウンをクリックし、*From template* を選択します。
++
+image::09-create-menu.png[link=self, window=blank, width=100%, Create VM]
+
+. デフォルトテンプレートの中から *Red Hat Enterprise Linux 9 VM* を選択します。
++
+image::10-template-menu.png[link=self, window=blank, width=100%, Create VM]
++
+NOTE: 利用可能な多様なテンプレートに注目してください。Windows VM も完全にサポートされています。
+
+. Virtual machine name の下に以下を入力し、その他のすべてのオプション（ディスクサイズ、ディスクソース）はデフォルトのままにします。
++
+[source,sh,role="copypaste"]
+----
+rhel9-lab-vm
+----
++
+[CAUTION]
+====
+VM を構成するための利用可能なすべてのオプションに注目してください。これらはオペレーティングシステムによって異なります。
+====
++
+. *Quick create Virtual Machine* をクリックし、進行状況を確認します。完了までに数分かかります。
+
+. 完了すると、ライブコンソールおよび VM に関する統計情報が表示されます。
++
+image::12-vm-finish.png[link=self, window=blank, width=100%, Create VM]
+
+[TIP]
+====
+*UI か GitOps か — 選択はあなた次第です！*
+
+このラボでは RHACM コンソールのグラフィカルな機能を示していますが、OpenShift における仮想マシンは本質的に Kubernetes オブジェクトです。YAML を使用して VM をコードとして定義し、Red Hat OpenShift GitOps (ArgoCD) を使用してデプロイできます。RHACM は双方のワークフローをサポートしています。迅速な管理や検出には UI を使用し、完全に宣言的で監査可能な本番パイプラインには GitOps を使用できます。クラウド環境において、GitOps ワークフローは、規制のデモンストレーションにおいてコンプライアンス要件や監査ログを満たすバージョン管理されたインフラストラクチャを提供します。
+====
+
+[[container-workloads]]
+=== OpenShift GitOps を通じたコンテナワークロードのデプロイと管理
+
+OpenShift GitOps（Argo CD および RHACM を使用）を使用すると、信頼できる単一の情報源（Single Source of Truth）として Git を使用して、クラスター全体にアプリをデプロイおよび管理できます。
+
+Git からクラスターが更新を取得する主な方法は2つあります。
+- プル (Pull) モード: 各クラスターが独自の更新を取得するため、セキュリティが高まり、すべてが特定リージョン内に保持されます。
+- プッシュ (Push) モード: 中央のツールがクラスターへ更新を送信します。
+
+このラボではプッシュモデル（Argo CD はセットアップ済み）を使用するため、異なる場所にある複数のクラスターであっても、GitOps を使用してアプリをどれほど簡単にデプロイおよび管理できるかを確認できます。
+
+[[deploy-applications-using-openshift-gitops]]
+
+== 複数環境におけるアプリケーションのデプロイと管理
+
+次のステップでは、Red Hat® OpenShift® GitOps と Argo CD を使用して、デモアプリケーションを local-cluster、EMEA クラスター、および AWS US クラスターを含む3つすべてのクラスターに宣言的にデプロイします。
+
+これはすべて、承認された地理的境界内に患者データを安全に保持することでクラウドの要件をサポートしながら、自動化された Git 駆動のマルチクラスター一貫性を実証するためのものです。
+
+.手順
+. **Fleet Management** タブから、左側メニューの *Applications* に移動します。
+. *Create application* をクリックし、*ArgoCD ApplicationSet - Push Model* を選択します。
+. 以下の情報を入力します: `skupper-patient-demo`
++
+[source,sh,subs="attributes",role="copypaste"]
+----
+skupper-patient-demo
+----
++
+. *Argo server* ドロップダウンを開き、*Add Argo Server* を選択します。
++
+image::13-argo.png[link=self, window=blank, width=100%, ArgoCD Create]
++
+. 以下の情報を入力します:
+* *Name:* `openshift-gitops-global`
++
+[source,sh,subs="attributes",role="copypaste"]
+----
+openshift-gitops-global
+----
++
+* *Namespace:* `openshift-gitops`（ドロップダウンから選択）
+* *ClusterSet:* `global`（`default` を削除して設定）
++
+[IMPORTANT]
+====
+次のステップで、Cluster set が `global` に設定されていることを確認してください。そうでない場合、以降のステップで問題が発生します。
+====
++
+image::03-argoconfig.png[link=self, window=blank, width=100%, ArgoCD Config]
+
+. *Add* をクリックします。
+. *Argo server* ドロップダウンから、登録したばかりの ArgoCD サーバーを選択します。
++
+image::03-app-gitops.png[link=self, window=blank, width=100%, App GitOps]
++
+. *Next* をクリックして *Repository* へ進みます。
+. Repository types で *Git* リポジトリタイプを選択します。
+. URL を入力し、ドロップダウンで *Create new option* を選択します。
++
+[source,sh,subs="attributes",role="copypaste"]
+----
+https://github.com/mfosterrox/demo-applications.git
+----
+. Revision に `main` を入力し、Revision のドロップダウンで *Create new option* を選択します。
+. ドロップダウンから *Path* を選択します（ドロップダウンに何も表示されない場合は、前のステップで新しいオプションを正しく作成したか確認してください）:
++
+[source,sh,subs="attributes",role="copypaste"]
+----
+skupper-demo
+----
+
+. Set Destination: *Remote Namespace*
++
+[source,sh,subs="attributes",role="copypaste"]
+----
+patient-portal
+----
+. ページのデフォルト設定はそのままにして、*Next* をクリックして進みます。
++
+image::03-app-gitops-2.png[link=self, window=blank, width=100%, App ACM GitOps]
++
+. *Placement* の下で、*New Placement* が選択されていることを確認します。
+* *Cluster set:* `global` を選択
+. *Label expressions* の下で *Add label expression* をクリックし、以下を選択します。
+* *Label:* name
+* *Operator:* equals any of
+* *Values:* managed-hcp, hcp-emea
+. *Set a limit on the number of clusters selected* のチェックを外します。
++
+[IMPORTANT]
+====
+Cluster set を Global に設定し、配置ルール (Placement rule) にラベル値が存在している必要があります。そうでない場合、アプリケーションが正しいクラスターにデプロイされません。
+====
++
+. すべての情報が正しいことを確認し、*Submit* をクリックします。
+
+====
+すべての手順に従っていれば、すべての緑色のチェックマークとともにアプリケーションがデプロイされたのを確認できます。これには最大 15 分かかる場合があるため、完了を待つ間に次のモジュールに進んでいただいて構いません。
+====
+
+image::03-app-complete.png[link=self, window=blank, width=100%, ACM App Placement US]
+
+== ポリシーガードレールによるセキュリティ
+
+*RHACM はこの目的のために構築されています！*
+
+* **主権ポリシーのコード化** — 主権やコンプライアンスの要件を、アプリケーションコードとともにバージョン管理およびレビューされるポリシーリソースとして表現します。
+* **大規模なガバナンス** — ClusterSet やラベルを使用して特定のリージョンや環境にポリシーをターゲット設定し、地域を超えた一貫性を強制します。
+* **自律的な監視** — 定義されたガードレールに対する「ドリフト（乖離）」を継続的にチェックし、中央で違反を表面化させて信頼を維持します。
+* **委任しつつ境界を強制** — プラットフォームチームが設定したフレームワーク内でアプリケーションチームが迅速に動けるようにし、ビジネスの自主性が組織の標準を損なうことがないようにします。
+
+=== リージョンを持つ単一クラスターにおけるポリシーへの対処
+
+EMEA（欧州・中東・アフリカ）における欧州連合 (EU) の一般データ保護規則 (GDPR) は、世界で最も包括的なデータ保護フレームワークの1つです。これは、EU 内で事業を展開する組織にとって多くの悩みの種でもあります。EMEA で稼働する Kubernetes クラスターの場合、GDPR はポリシーとしてコード化されなければならない特定の技術的要件を課しています。
+
+GDPR の技術的要件のコアピラーに対処するために、3つのポリシーを EMEA クラスターにデプロイしましょう。
+- **データレジデンシー（データ居住性）のラベル付け**（第44条〜第49条 — 適切な分類メタデータを持つ主権ネームスペースの存在を保証）
+- **Design by Data Protection（データ保護による設計）**（第25条 — ネットワーク隔離）
+- **処理のセキュリティ**（第32条 — ポッドセキュリティの強化）
+
+=== EMEA 管理クラスターへのポリシーのデプロイ
+
+.手順
+. Fleet Management コンソールから *+* サイン -> *Import YAML* タブをクリックします。
++
+image::02-rhacm-yaml.png[RHACM YAML policy editor, link=self, window=blank, width=100%]
+
+. 次に、以下の YAML を貼り付けて *Create* をクリックします。
++
+[source,yaml,subs="+macros,+attributes",role="copypaste"]
+----
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-emea-namespace-compliance
+  namespace: policies
+  annotations:
+    policy.open-cluster-management.io/standards: GDPR
+    policy.open-cluster-management.io/categories: Data Protection
+    policy.open-cluster-management.io/controls: Data Residency Labeling
+spec:
+  remediationAction: inform
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: emea-sovereignty-namespace
+        spec:
+          remediationAction: inform
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: gdpr-workloads
+                  labels:
+                    data-classification: gdpr-restricted
+                    sovereignty: emea-only
+                    compliance-framework: gdpr
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    compliance.example.com/regulation: "EU General Data Protection Regulation"
+                    compliance.example.com/articles: "Article 25, Article 32, Article 44-49"
+                    compliance.example.com/data-residency: "EU/EEA only"
+                    compliance.example.com/contact: "dpo@example.com"
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: emea-data-residency-namespace
+        spec:
+          remediationAction: inform
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: data-residency-emea
+                  labels:
+                    data-classification: gdpr-restricted
+                    sovereignty: emea-only
+                    compliance-framework: gdpr
+                  annotations:
+                    compliance.example.com/regulation: "EU General Data Protection Regulation"
+                    compliance.example.com/data-residency: "EU/EEA only"
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-emea-namespace-compliance
+  namespace: policies
+spec:
+  clusterSets:
+    - managed
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: location
+              operator: In
+              values:
+                - emea
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: binding-emea-namespace-compliance
+  namespace: policies
+placementRef:
+  name: placement-policy-emea-namespace-compliance
+  kind: Placement
+  apiGroup: cluster.open-cluster-management.io
+subjects:
+  - name: policy-emea-namespace-compliance
+    kind: Policy
+    apiGroup: policy.open-cluster-management.io
+----
+image::02-rhacm-yaml-1.png[RHACM YAML policy applied, link=self, window=blank, width=100%]
++
+[IMPORTANT]
+====
+GDPR コンプライアンスは、明確にラベル付けされたネームスペースを持つことから始まります。ラベルとアノテーションにより、ポリシーが GDPR 制限対象のワークロードをターゲットにし、監査要件をサポートし、データレジデンシーを強制できるようになります。このポリシーでは、すべての EMEA クラスターに2つのキーネームスペース（コンプライアンス用に完全にラベル付けされた `gdpr-workloads` と、厳格な EU 限定ワークロード用の `data-residency-emea`）を含めることが義務付けられています。適切なラベル付けは、規制当局に対して GDPR コンプライアンスを証明するために不可欠です。
+====
++
+. YAML が適切に追加され、エラーがないことを確認します。
++
+image::02-rhacm-yaml-2.png[RHACM YAML policy verification, link=self, window=blank, width=100%]
++
+. 次に、左パネルで *Governance* 項目を選択し、*Policies* タブに移動します。*Filter* を選択し、*policies* ネームスペースにチェックを入れると、このネームスペースのポリシーのみが表示されます。
++
+image::02-rhacm-yaml-3.png[link=self, window=blank, width=100%]
+
+. *policy-emea-namespace-compliance* が作成されたことを確認します。Remediation（是正アクション）が Inform に設定されていることに注目してください。
+. ポリシーを選択して、--> Actions --> Remediation --> Enforce を選択することで、これを Enforce に変更します。
++
+image::02-rhacm-yaml-4.png[link=self, window=blank, width=100%]
++
+. 実行には数秒かかりますが、*Cluster Violations* が赤から緑に変わり、クラスターがコンプライアンスに適合したことを示します。
++
+image::02-rhacm-yaml-5.png[link=self, window=blank, width=100%]
++
+
+====
+ポリシーを作成して通知 (Inform) および強制 (Enforce) することで、EMEA クラスターが GDPR 要件に適合していることを確認できました。同じラベルを持つ新しいクラスターもすべて、GDPR 要件に適合することになります。
+====
+
+=== マルチクラスター管理の重要なまとめ
+
+* **中央集権的クラスター管理** — RHACM を使用して、1箇所から複数のリージョンにわたる OpenShift クラスターを作成、ラベル付け、および管理します。
+
+* **統一されたワークロード管理** — クラスター全体の完全な可視性をもって、仮想マシンとコンテナを一緒に運用します。
+
+* **一貫したアプリのデプロイ** — OpenShift GitOps と RHACM による Git バックエンドの自動化を使用して、複数のクラスターにアプリケーションをデプロイおよび更新します。
+
+* **自動化されたコンプライアンス** — ポリシーをコードとして定義および適用し、データ居住性および組織の要件を満たします。

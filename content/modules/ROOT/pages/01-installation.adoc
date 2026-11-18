@@ -1,0 +1,361 @@
+= インストールと検証
+:page-toclevels: 1
+
+**所要時間:** 10 分 +
+**形式:** ハンズオン検証
+
+include::partial$console-access.adoc[]
+
+== 確認内容
+
+これらは、インストール後、アップグレード後、または何らかの異常を感じたときに実行する確認項目（ClusterOperators、ノード設定、ネットワーク、ストレージ、および etcd の健全性）と同じものです。
+
+お使いのクラスターは、コンピュート、ネットワーク、ストレージ、および DNS を自動化する IPI（Installer-Provisioned Infrastructure：インストーラー準備機能によるインフラストラクチャ）を使用してプロビジョニングされています。OpenShift は、UPI、ベアメタル向けの Agent-based / Assisted Installer、および Red Hat OpenShift Service on AWS (ROSA) や Azure Red Hat OpenShift (ARO) などのマネージドサービスもサポートしています。詳細は link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/installation_overview/index[インストール関連ドキュメント, window=blank] を参照してください。
+
+TIP: インストール後に**変更できない**2つの設定：**Pod ネットワーク CIDR** と **Service ネットワーク CIDR**。社内ネットワークと重複している場合は、クラスターを再構築することになります。
+
+== クラスターの健全性
+
+=== ステップ 1: Cluster Operators の検証（プライマリヘルスチェック）
+
+**ClusterOperators** は、クラスターの健全性に関する唯一の信頼できる情報源（Single Source of Truth）です。各オペレーターは特定のクラスターコンポーネントを管理し、そのステータスを報告します。
+
+すべてのクラスターオペレーターを表示します：
+
+[source,bash,role="execute"]
+----
+oc get clusteroperators
+----
+
+約 34 個のオペレーターが表示されます。出力例：
+
+----
+NAME                         VERSION   AVAILABLE   PROGRESSING   DEGRADED   SINCE
+authentication               4.20.x    True        False         False      3h
+cloud-credential             4.20.x    True        False         False      4h
+console                      4.20.x    True        False         False      3h
+dns                          4.20.x    True        False         False      4h
+etcd                         4.20.x    True        False         False      4h
+ingress                      4.20.x    True        False         False      3h
+kube-apiserver               4.20.x    True        False         False      4h
+kube-controller-manager      4.20.x    True        False         False      4h
+kube-scheduler               4.20.x    True        False         False      4h
+machine-api                  4.20.x    True        False         False      4h
+machine-config               4.20.x    True        False         False      4h
+monitoring                   4.20.x    True        False         False      3h
+network                      4.20.x    True        False         False      4h
+openshift-apiserver          4.20.x    True        False         False      3h
+storage                      4.20.x    True        False         False      4h
+----
+
+**確認ポイント：**
+
+* **AVAILABLE = True** - コンポーネントが機能している
+* **PROGRESSING = False** - アップグレードやロールアウトが進行中でない
+* **DEGRADED = False** - コンポーネントが正常である
+
+**正常なクラスター:** すべてのオペレーターが `True False False` と表示されます。
+
+**オペレーターが劣化（degraded）している場合**は、さらに調査します：
+
+[source,bash,role="copypaste"]
+----
+oc describe clusteroperator <operator-name>
+----
+
+`Conditions` セクションで、劣化している理由の詳細を確認します。
+
+**よくある問題：**
+
+* `machine-config` が progressing - ノードが更新中（更新処理中としては正常）
+* `monitoring` が degraded - ストレージまたはリソースの問題
+* `authentication` が degraded - OAuth または LDAP の設定問題
+
+**コンソールでの表示:** **OCP Console** タブに切り替え、**Administration -> Cluster Settings** に移動し、**ClusterOperators** タブを選択します。コンソールでは各オペレーターが緑/赤のステータスアイコンで表示され、34 行のテーブルを読み込なくても機能低下したオペレーターを即座に認識できます。迅速なヘルスチェックには CLI よりも高速です。
+
+image::installation-images/clusteroperators-console.png[ClusterOperators in web console, link=self, window=blank]
+=== ステップ 2: クラスターバージョンとアップデートステータスの確認
+
+現在のクラスターバージョンを表示します：
+
+[source,bash,role="execute"]
+----
+oc get clusterversion
+----
+
+出力は以下のようになります：
+----
+NAME      VERSION   AVAILABLE   PROGRESSING   SINCE   STATUS
+version   4.20.x    True        False         3h      Cluster version is 4.20.x
+----
+
+サブスクライブしているアップデートチャネルを確認します：
+
+[source,bash,role="execute"]
+----
+oc get clusterversion version -o jsonpath='{.spec.channel}'
+----
+
+一般的なチャネル：
+
+* **stable-4.20** - 本番環境向けのリリース（推奨）
+* **fast-4.20** - 安定したリリースへの早期アクセス
+* **eus-4.20** - Extended Update Support（14 か月のライフサイクル）
+* **candidate-4.20** - プレリリースによるテスト
+
+利用可能なアップデートを表示します：
+
+[source,bash,role="execute"]
+----
+oc adm upgrade
+----
+
+アップデートが利用可能な場合は、推奨バージョンのリストが表示されます。クラスターがすでに最新である場合は、以下のように表示されます：
+
+----
+No updates available. You may still upgrade to a specific release image
+with --to-image or wait for new updates to be available.
+----
+
+**OCP Console** では、**Administration -> Cluster Settings** に移動します。**Details** タブには、現在のバージョン、アップデートチャネルが表示され、アップデートが利用可能な場合は、現在のバージョンから利用可能なターゲットまでのルートを示すビジュアルなアップグレードパスグラフが表示されます。これは、アップグレードの計画において CLI のテキスト出力よりもはるかに有益です。
+
+image::installation-images/cluster-settings-update.png[Cluster Settings Details tab showing version and update channel, link=self, window=blank]
+**重要なポイント:** オペレーターがクラスターのアップデートを管理します。アップデートが利用可能な場合は、単一のコマンド（`oc adm upgrade --to=<version>`）でアップグレードできます。
+
+== ステップ 3: ノード設定の検証
+
+プラットフォームの概要で調査したノードの健全性に加えて、インストール後特有の重要な検証ステップとして **MachineConfigPools** があります。
+
+**ノード設定ステータスの確認：**
+
+[source,bash,role="execute"]
+----
+oc get machineconfigpool
+----
+
+出力は以下のようになります：
+----
+NAME     CONFIG             UPDATED   UPDATING   DEGRADED   MACHINECOUNT   READYMACHINECOUNT
+master   rendered-master-…  True      False      False      3              3
+worker   rendered-worker-…  True      False      False      0              0
+----
+
+NOTE: このコンパクトなクラスターでは、すべてのノードが master プールの下でコントロールプレーンとワーカーの両方の役割を果たすため、worker プールのマシン数は 0 と表示されます。
+
+**表示内容の意味：**
+
+* **UPDATED = True** - すべてのノードに最新の設定が適用されている
+* **UPDATING = True** - 新しい設定でノードが展開中（変更作業中は正常）
+* **DEGRADED = True** - 一部のノードで設定に失敗した（調査が必要）
+
+MachineConfigPools は、ノードレベルの設定（カーネル引数、systemd ユニットなど）を管理し、ローリングアップデートを調整します。
+
+コンソールでも確認できます。**Compute -> MachineConfigPools** に移動します：
+
+image::installation-images/machineconfigpools-console.png[MachineConfigPools showing master and worker pools with Up to date status, link=self, window=blank]
+緑色の *Up to date* インジケーターと *Degraded: False* は、すべてのノード設定が正常に適用されたことを確認するものです。アップグレードや設定変更の際には、*Update status* が *Updating* に変わります。このビューは、CLI をポーリングすることなくノードの展開状況を監視する簡単な方法です。
+
+== ステップ 4: ネットワークのテスト（ハンズオン）
+
+テストアプリケーションとルートを作成して、ネットワークが機能していることを検証します：
+
+[source,bash,role="execute"]
+----
+oc new-project install-test 2>/dev/null || oc project install-test
+oc new-app --name=test-app --image=registry.access.redhat.com/ubi9/httpd-24 -n install-test
+----
+
+Pod が実行状態になるまで待ち、ルートを作成します：
+
+[source,bash,role="execute"]
+----
+oc rollout status deployment/test-app -n install-test --timeout=60s
+oc create route edge test-app --service=test-app -n install-test
+----
+
+NOTE: 完了までに 1 分程度かかる場合があります。5 分以上実行されている場合のみ **Ctrl+C** を押してください。
+
+ルートをテストします：
+
+[source,bash,role="execute"]
+----
+curl -sk https://$(oc get route test-app -n install-test -o jsonpath='{.spec.host}') | grep title
+----
+
+**証明されたこと:** DNS が機能し、ルーターが正常であり、TLS 証明書が自動生成され、アプリケーションがクラスター外部からアクセス可能であること。
+
+TIP: コンソールの **Networking > Routes**（プロジェクト: `install-test`）でもルートを検証できます。ルートの URL をクリックしてブラウザから直接テストしてください。
+
+クリーンアップ：
+
+[source,bash,role="execute"]
+----
+oc delete project install-test &>/dev/null & disown
+----
+
+== ストレージと etcd
+
+=== ステップ 5: ストレージプロビジョニングのテスト
+
+PVC とそれをマウントする Pod を作成して、動的ストレージが機能することを検証します：
+
+[source,bash,role="execute"]
+----
+oc new-project storage-test 2>/dev/null || oc project storage-test
+cat <<EOF | oc apply -n storage-test -f -
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-pvc
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-storage
+spec:
+  containers:
+  - name: test
+    image: registry.access.redhat.com/ubi9/ubi-minimal
+    command: ["/bin/sh", "-c", "echo 'Storage works!' > /data/test.txt && cat /data/test.txt && sleep 30"]
+    volumeMounts:
+    - name: data
+      mountPath: /data
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+      capabilities:
+        drop: ["ALL"]
+      seccompProfile:
+        type: RuntimeDefault
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: test-pvc
+  restartPolicy: Never
+EOF
+----
+
+PVC がバインドされ、Pod が起動するまで待ちます：
+
+[source,bash,role="execute"]
+----
+echo "Waiting for storage test to complete..."
+ELAPSED=0
+until oc get pod test-storage -n storage-test --no-headers 2>/dev/null | grep -qE 'Running|Completed'; do
+  sleep 5; ELAPSED=$((ELAPSED+5))
+  [ $ELAPSED -ge 120 ] && echo "ERROR: Timed out - check 'oc get pods -n storage-test'" && break
+done
+oc get pvc test-pvc -n storage-test && oc get pod test-storage -n storage-test
+----
+
+PVC が `Bound` と表示され、Pod が `Running` または `Completed` になるはずです：
+
+----
+NAME       STATUS   VOLUME        CAPACITY   ACCESS MODES   STORAGECLASS                           AGE
+test-pvc   Bound    pvc-xxxxxxx   1Gi        RWO            ocs-external-storagecluster-ceph-rbd   15s
+
+NAME           READY   STATUS    RESTARTS   AGE
+test-storage   1/1     Running   0          15s
+----
+
+TIP: コンソールで **Storage > PersistentVolumeClaims**（プロジェクト: `storage-test`）に移動すると、PVC のステータスとバインドされた PersistentVolume を確認できます。
+
+Pod がボリュームへの書き込みに成功したか確認します：
+
+[source,bash,role="execute"]
+----
+oc logs test-storage -n storage-test
+----
+
+`Storage works!` と表示されれば、動的プロビジョニング、ボリュームのアタッチ、および読み書きがすべて正常に機能していることが確認できます。
+
+クリーンアップ：
+
+[source,bash,role="execute"]
+----
+oc delete project storage-test &>/dev/null & disown
+----
+
+=== ステップ 6: etcd の健全性の検証
+
+etcd は、すべてのクラスター状態を保持する分散キーバリューストアです。etcd が正常でない場合、すべてが不調になります。インストール後に確認すべき 2 つの重要メトリクス：
+
+* **リーダー選挙（Leader elections）** - 0 または非常に低い値である必要があります。頻繁なリーダー選挙は、ディスク I/O の問題またはコントロールプレーンノード間のネットワーク遅延を示しています。
+* **ディスク同期期間（Disk sync duration）** - fsync 時間が継続的に 10ms を超える場合、etcd のパフォーマンスが低下し、`oc` コマンドがタイムアウトし始めます。
+
+**OCP Console** の **Observe -> Metrics** で両方を確認します。以下のクエリを入力して **Run Queries** をクリックします：
+
+[source,promql,role="copypaste"]
+----
+increase(etcd_server_leader_changes_seen_total[24h])
+----
+
+すべての etcd メンバーで 0 回の選挙が表示されるはずです。これが正常な状態です。
+
+次に、ディスク同期時間を確認します：
+
+[source,promql,role="copypaste"]
+----
+histogram_quantile(0.99, rate(etcd_disk_wal_fsync_duration_seconds_bucket[5m]))
+----
+
+これは、etcd メンバーごとの WAL fsync レイテンシの 99 パーセンタイルを示します。10ms 未満の値が理想的です。ワークショップクラスターでは、共有ストレージのために高い値を示す場合がありますが、これは予期された動作です。
+
+また、monitoring オペレーターが正常であることも確認します：
+
+[source,bash,role="execute"]
+----
+oc get clusteroperator monitoring
+----
+
+----
+NAME         VERSION   AVAILABLE   PROGRESSING   DEGRADED   SINCE   MESSAGE
+monitoring   4.20.x    True        False         False      3h
+----
+
+== まとめ
+
+**検証した内容:** ClusterOperators の健全性、クラスターバージョンとアップデートチャネル、ノード設定（MachineConfigPools）、ネットワーク（デプロイ、ルート、接続性）、ストレージプロビジョニング（PVC のバインド）、および etcd の健全性（メンバーのステータス、fsync レイテンシ）。これらは、インストール後、アップグレード後、または異常を感じたときに実行する確認項目と同じです。
+
+**重要なポイント:** `oc get clusteroperators` が一次的なヘルスチェックとなります。すべてのオペレーターが `True False False` を示していれば、ワークロードを実行する準備が整った正常なクラスターです。それ以上に、monitoring オペレーターが正常であることを確認し、etcd の健全性を検証してください。
+
+== OpenShift がインストールされる仕組み
+
+このモジュールでは稼働中のクラスターの検証に焦点を当てましたが、管理者はクラスターがどのように構築されるか尋ねられることがよくあります。利用可能なインストール方法の概要は以下のとおりです：
+
+[cols="1,2,1"]
+|===
+|方法 |説明 |最適な用途
+
+|**Assisted Installer**
+|事前検証とスマートなデフォルト設定を備えた Web ベースのウィザード。プロビジョニングを自動的に処理するディスカバリー ISO を生成します。
+|クラウド、オンプレミス、初めてのインストール
+
+|**Agent-based Installer**
+|Assisted Installer のオフラインバージョン。展開に必要なすべてを含む起動可能な ISO を生成し、外部サービスは不要です。
+|非接続環境／エアギャップ環境
+
+|**IPI (Installer-Provisioned Infrastructure)**
+|`openshift-install` バイナリが、クラウドまたは BMC の API を使用して、コンピュート、ネットワーク、およびストレージを自動的にプロビジョニングします。
+|クラウドプラットフォーム（AWS、Azure、GCP）、BMC 付きベアメタル
+
+|**UPI (User-Provisioned Infrastructure)**
+|インフラストラクチャを自身でプロビジョニングした後、インストーラーを実行してその上に OpenShift を展開します。最大限の制御とカスタマイズが可能です。
+|既存のインフラストラクチャ、カスタムネットワーク、コンプライアンス要件
+|===
+
+**ブートストラッププロセスの仕組み:** OpenShift のすべてのインストールは、永続的なコントロールプレーンを立ち上げるのに十分な期間だけコントロールプレーンコンポーネントを実行する、一時的なブートストラップノードから始まります。永続的なコントロールプレーンが稼働すると、ブートストラップノードは削除されます。各ノードは、RHCOS (Red Hat Enterprise Linux CoreOS) に対し自身の設定方法、実行するサービス、およびクラスターの検索場所を指示するマシン設定ファイルである Ignition 設定から起動します。
+
+完全な詳細については、link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html-single/installation_overview/index[Installation Overview, window=blank] を参照してください。
+
+=== 追加リソース
+
+* **Installing OpenShift:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/installation_overview/index[Installation Documentation, window=blank]
+* **Verifying Cluster Status:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/support/troubleshooting#verifying-node-health[Troubleshooting Guide, window=blank]
+* **ClusterOperators Reference:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/operators/operator-reference[Operator Reference, window=blank]

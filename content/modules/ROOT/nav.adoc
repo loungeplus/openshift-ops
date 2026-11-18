@@ -1,0 +1,79 @@
+// OpenShift Ops Day Roadshow
+// Navigation with catalog parameter conditionals
+//
+// Flow: Setup → Core Ops → Identity → Day 2 Ops → Advanced
+//
+// Catalog parameters (from agnosticv):
+//   module_enable_install,
+//   module_enable_appmgmt, module_enable_ingress, module_enable_netsec,
+//   module_enable_debugging, module_enable_gitops,
+//   module_enable_ldap, module_enable_oidc,
+//   module_enable_observability, module_enable_performance,
+//   module_enable_virt, module_enable_devhub, module_enable_ols,
+//   module_enable_acm, module_enable_security,
+//   module_enable_ztwim, module_enable_vault
+
+// Setup & Overview (always shown)
+* xref:index.adoc[セットアップと概要]
+ifeval::["{module_enable_install}" == "true"]
+* xref:01-installation.adoc[インストールと検証]
+endif::[]
+
+// Core Operations - deploy, expose, secure, debug
+ifeval::["{module_enable_appmgmt}" == "true"]
+* xref:02-app-mgmt.adoc[アプリケーション管理]
+endif::[]
+ifeval::["{module_enable_ingress}" == "true"]
+* xref:03-ingress-loadbalancing.adoc[Ingress とロードバランシング]
+endif::[]
+ifeval::["{module_enable_netsec}" == "true"]
+* xref:04-network-security.adoc[ネットワークセキュリティ]
+endif::[]
+ifeval::["{module_enable_debugging}" == "true"]
+* xref:05-debugging-troubleshooting.adoc[デバッグとトラブルシューティング]
+endif::[]
+ifeval::["{module_enable_gitops}" == "true"]
+* xref:06-gitops.adoc[GitOps]
+endif::[]
+
+// Identity & Access
+ifeval::["{module_enable_ldap}" == "true"]
+* xref:07-ldap-authentication.adoc[アイデンティティ - LDAP]
+endif::[]
+ifeval::["{module_enable_oidc}" == "true"]
+* xref:08-oidc-authentication.adoc[アイデンティティ - OIDC]
+endif::[]
+
+// Day 2 Operations
+ifeval::["{module_enable_observability}" == "true"]
+* xref:09-observability.adoc[可視性とログ記録]
+endif::[]
+ifeval::["{module_enable_performance}" == "true"]
+* xref:10-performance-tuning.adoc[パフォーマンストゥーニング]
+endif::[]
+
+// Advanced Topics
+ifeval::["{module_enable_virt}" == "true"]
+* xref:11-virtualization.adoc[Virtualization]
+endif::[]
+ifeval::["{module_enable_devhub}" == "true"]
+* xref:12-developer-hub.adoc[Developer Hub]
+endif::[]
+ifeval::["{module_enable_ols}" == "true"]
+* xref:13-openshift-lightspeed.adoc[Lightspeed]
+endif::[]
+ifeval::["{module_enable_acm}" == "true"]
+* xref:14-acm.adoc[ACM マルチクラスター管理]
+endif::[]
+ifeval::["{module_enable_security}" == "true"]
+* xref:15-acs.adoc[Advanced Cluster Security]
+endif::[]
+ifeval::["{module_enable_vault}" == "true"]
+* xref:16-secrets-management.adoc[シークレット管理]
+endif::[]
+ifeval::["{module_enable_ztwim}" == "true"]
+* xref:17-ztwim.adoc[Zero-Trust Workload Identity Manager]
+endif::[]
+
+// Conclusion (always shown)
+* xref:99-conclusion.adoc[まとめ]

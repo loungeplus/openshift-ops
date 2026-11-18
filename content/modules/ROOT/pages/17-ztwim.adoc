@@ -1,0 +1,328 @@
+= SPIFFE mTLS による Zero-Trust データベースアクセス
+
+== モジュールの概要
+
+**所要時間:** 20 分 +
+**形式:** ハンズオンラボ +
+**対象者:** セキュリティエンジニア、プラットフォームエンジニア、IT運用担当者
+
+include::partial$console-access.adoc[]
+
+決済処理サービスが PostgreSQL にアクセスする必要があります。データベースチームは、Kubernetes の `Secret` で新たな共有パスワードを発行することを拒否しています。そして、彼らが難色を示すのは当然のことです。Git、コンテナイメージ、あるいは長期間有効な Secret 内に存在する静的な資格情報は、攻撃者が侵入後に真っ先に狙う対象となります。
+
+前のモジュールでは、Vault を使用してシークレットを集中管理しました。ここではさらに一歩進めて、**データベースパスワードを一切使用しない**構成を構築します。**Zero Trust Workload Identity Manager (ZTWIM)** は、各ワークロードの Kubernetes アイデンティティにバインドされた、短期間有効な X.509 証明書を発行します。PostgreSQL は、パスワードボルトのエントリの代わりにそれらの証明書を信頼します。
+
+このラボを完了すると、以下のことができるようになります。
+
+* ワークショップのセットアップスクリプトを使用して、ラボ用に ZTWIM を構成する
+* SPIFFE 発行の証明書を備えた PostgreSQL と、独立したクライアントワークロードアイデンティティをデプロイする
+* パスワードの代わりに短期間有効な SPIFFE 証明書を使用して、相互 TLS (mTLS) データベース接続を確立する
+* 証明書のプロパティ、アイデンティティのバインディング、および自動証明書ローテーションを検査する
+* 有効な証明書を持たない接続が拒否されることを確認する
+
+Zero-Trust の原則では、ワークロードアイデンティティの暗号論的な証明が必要です。SPIFFE (Secure Production Identity Framework for Everyone) はこのアプローチの背景にあるオープン標準であり、ZTWIM は SPIRE（SPIFFE ランタイム）を OpenShift にもたらすため、プライベート CA を手動で管理することなく、すべての Pod が暗号化されたアイデンティティを取得できます。
+
+[cols="1,2,2",options="header"]
+|===
+|領域 |無視した場合のリスク |例え
+|静的データベースパスワード | 資格情報の盗難により永続化を許す | マスターキーの複製が至る所に放置されている
+|パスワードベース認証 | ブルートフォース / パスワードスプレー攻撃 | 推測されやすいダイヤル錠
+|ネットワークのみのセキュリティ | 侵入後の横移動（ラテラルムーブメント） | 玄関は施錠、室内のドアは開放
+|手動の証明書ローテーション | 古い資格情報が有効なまま残る | 期限切れのビル入館証がまだ使える
+|相互認証なし | サーバーがクライアントを検証できない | 安全な施設での一方向の身元確認
+|===
+
+[[configure-ztwim-platform]]
+[[deploy-postgresql]]
+== プラットフォームの準備と PostgreSQL のデプロイ
+
+ZTWIM はこのクラスターにすでにインストールされています。信頼ドメインと SPIRE の構成を登録し、PostgreSQL とクライアントワークロードをデプロイします。データベースが TLS が有効であることだけでなく、**誰が**接続しているかを強制できるように、それぞれが独自のサービスアカウントを持つ独自のネームスペースにデプロイされます。
+
+[NOTE]
+====
+**Showroom 環境:** ZTWIM オペレーターは事前インストールされています。セットアップスクリプトを実行して、PostgreSQL ラボ用に SPIRE を準備してください。
+====
+
+. バスティオンからプラットフォームセットアップスクリプトを実行します。
++
+[source,bash,subs="+macros,+attributes",role=execute]
+----
+cd ~/
+git clone https://github.com/rhpds/openshift-days-ops-showroom.git
+git pull
+cd ~/openshift-days-ops-showroom/setup-scripts/ztwim-config-scripts
+./configure-ztwim-lab.sh
+----
++
+. スクリプトが *ZTWIM platform is ready* と報告するまで待ちます。
++
+TIP: スクリプトは SPIRE サーバー、エージェント、CSI ドライバー、および OIDC ディスカバリエンドポイントを構成します。失敗した場合は、再実行する前に `oc get pods -n openshift-zero-trust-workload-identity-manager` を確認してください。
++
+. PostgreSQL サーバーとクライアントワークロードをデプロイします。
++
+[source,bash,subs="+macros,+attributes",role=execute]
+----
+cd ~/openshift-days-ops-showroom/setup-scripts/ztwim-config-scripts
+./configure-ztwim-postgresql-lab.sh deploy
+----
++
+. 両方の Pod が `2/2 Running`（1つのアプリケーションコンテナと、証明書を最新に保つ1つの `spiffe-helper` サイドカー）であることを確認します。
++
+[source,bash,subs="+macros,+attributes",role=execute]
+----
+oc get pods -n postgresql-spiffe
+oc get pods -n postgresql-spiffe-client
+----
+
+[NOTE]
+====
+クライアント証明書の Common Name (`postgresql_spiffe`) は、PostgreSQL データベースユーザーと一致する必要があります。PostgreSQL は証明書認証中に CN をユーザー名にマッピングします。
+====
+
+== SPIFFE 証明書の検査
+
+接続する前に、ZTWIM が実際に何を発行したかを確認します。証明書は `spiffe-helper` サイドカーによって `/opt/postgresql-certs/` に自動的にマウントされます。PEM ファイルを手動で作成したりコピーしたりすることはありません。
+
+. **サーバー** Pod で証明書をダンプし、それが表示する**対象 (who)**、有効**期間 (how long)**、および正ノニカル SPIFFE アイデンティティ URI の3つのフィールドに注目します。
++
+[source,bash,subs="+macros,+attributes",role=execute]
+----
+oc rsh -n postgresql-spiffe -c postgresql-spiffe deployment/postgresql-spiffe \
+  cat /opt/postgresql-certs/svid.pem | openssl x509 -noout -text
+----
++
+出力から以下を探します。
+
+* *Subject* — サーバーホスト名 (`CN=postgresql-spiffe.postgresql-spiffe.svc`)
+* *Validity* — 短い有効期間（デフォルト：1時間）。`Not After` は `Not Before` のおよそ1時間後になります
+* *Subject Alternative Name* — DNS 名と SPIFFE ID URI：
++
+[source,text]
+----
+X509v3 Subject Alternative Name:
+    DNS:postgresql-spiffe.postgresql-spiffe.svc
+    URI:spiffe://<trust-domain>/ns/postgresql-spiffe/sa/postgresql-spiffe
+----
+
+SPIFFE ID の形式は `spiffe://<trust-domain>/ns/<namespace>/sa/<serviceaccount>` です。本番環境では、監査人は CN だけでなく SPIFFE ID URI を要求することがよくあります。これはアイデンティティが Kubernetes のネームスペースとサービスアカウントにバインドされるためです。
+
+. サーバー上の証明書ファイルを一覧表示します。`postgres` が所有する3つのファイルが表示されるはずです。
++
+[source,bash,subs="+macros,+attributes",role=execute]
+----
+oc rsh -n postgresql-spiffe -c postgresql-spiffe deployment/postgresql-spiffe \
+  ls -la /opt/postgresql-certs/
+----
++
+* `svid.key` — 秘密鍵（パーミッション `600`、`postgres` のみが読み取り可能）
+* `svid.pem` — ワークロード証明書
+* `svid_bundle.pem` — 検証用 CA バンドル
++
+. **クライアント** Pod で同じ検査を実行し、アイデンティティを並べて比較します。
++
+[source,bash,subs="+macros,+attributes",role=execute]
+----
+oc rsh -n postgresql-spiffe-client -c postgresql-spiffe-client deployment/postgresql-spiffe-client \
+  cat /opt/postgresql-certs/svid.pem | openssl x509 -noout -text
+----
++
+クライアントの CN は PostgreSQL データベースユーザーと一致する必要があります。
++
+[source,text]
+----
+Subject: C=US, O=SPIRE, CN=postgresql_spiffe
+----
++
+各ワークロードは一意の SPIFFE ID を取得します。
+
+* *サーバー*: `spiffe://.../ns/postgresql-spiffe/sa/postgresql-spiffe`
+* *クライアント*: `spiffe://.../ns/postgresql-spiffe-client/sa/postgresql-spiffe-client`
++
+. クライアント証明書の有効期限が切れる日時を確認します。
++
+[source,bash,subs="+macros,+attributes",role=execute]
+----
+oc rsh -n postgresql-spiffe-client -c postgresql-spiffe-client deployment/postgresql-spiffe-client \
+  sh -c 'echo "Current time: $(date)"; openssl x509 -in /opt/postgresql-certs/svid.pem -noout -dates'
+----
+
+`spiffe-helper` サイドカーは、有効期限の約30分前に新しい証明書を取得します。短い有効期間は機能の1つです。攻撃者が証明書を盗んだとしても、悪用されるウィンドウは誰かがパスワードをローテーションするまでの数か月ではなく、数分単位で測定されます。
+
+== 接続と相互 TLS の検証
+
+証明書を活用する時間です。`sslmode=verify-full` を指定して `psql` を使用し、クライアント Pod から接続します。クライアントはそのアイデンティティを証明し、PostgreSQL は**自身**のアイデンティティを証明し、ホスト名検証に合格する必要があります。パスワードの入力プロンプトはありません。なぜなら、パスワードが存在しないからです。
+
+. 1行の接続テストを実行します。
++
+[source,bash,subs="+macros,+attributes",role=execute]
+----
+oc rsh -n postgresql-spiffe-client -c postgresql-spiffe-client deployment/postgresql-spiffe-client \
+  psql "host=postgresql-spiffe.postgresql-spiffe.svc port=5432 user=postgresql_spiffe dbname=testdb sslmode=verify-full sslcert=/opt/postgresql-certs/svid.pem sslkey=/opt/postgresql-certs/svid.key sslrootcert=/opt/postgresql-certs/svid_bundle.pem" \
+  -c "SELECT current_user, current_database();"
+----
++
+期待される出力：
++
+[source,text]
+----
+   current_user    | current_database
+-------------------+------------------
+ postgresql_spiffe | testdb
+(1 row)
+----
+
+これが成果です。証明書の CN がデータベースロールと一致したため、`current_user` は `postgresql_spiffe` になります。主要な接続パラメーター: `user` は証明書の CN と一致する必要があります。`sslmode=verify-full` は最も厳格なモードです（サーバーが検証され、ホスト名が一致し、クライアント証明書が必要）。`sslcert`、`sslkey`、および `sslrootcert` は、`/opt/postgresql-certs/` の下にある SPIFFE 発行のファイルを指します。
+
+. TLS が実際に使用されているという証拠を収集します。
++
+[source,bash,subs="+macros,+attributes",role=execute]
+----
+oc rsh -n postgresql-spiffe-client -c postgresql-spiffe-client deployment/postgresql-spiffe-client \
+  psql "host=postgresql-spiffe.postgresql-spiffe.svc port=5432 user=postgresql_spiffe dbname=testdb sslmode=verify-full sslcert=/opt/postgresql-certs/svid.pem sslkey=/opt/postgresql-certs/svid.key sslrootcert=/opt/postgresql-certs/svid_bundle.pem" \
+  -c '\conninfo' \
+  -c 'SELECT ssl_is_used();' \
+  -c 'SELECT version();'
+----
++
+出力で `SSL connection (protocol: TLSv1.3, ...)` を確認し、`ssl_is_used` が `t` を返すことを確認します。クラスター IP と PostgreSQL のビルド文字列は環境によって異なる場合があります。
++
+. 機能するセッションがあることを証明します。行を挿入してそれを読み戻します。
++
+[source,bash,subs="+macros,+attributes",role=execute]
+----
+oc rsh -n postgresql-spiffe-client -c postgresql-spiffe-client deployment/postgresql-spiffe-client \
+  psql "host=postgresql-spiffe.postgresql-spiffe.svc port=5432 user=postgresql_spiffe dbname=testdb sslmode=verify-full sslcert=/opt/postgresql-certs/svid.pem sslkey=/opt/postgresql-certs/svid.key sslrootcert=/opt/postgresql-certs/svid_bundle.pem" <<'SQL'
+INSERT INTO test_table (name, text)
+VALUES ('spiffe-test', 'Authenticated with certificates!');
+SELECT * FROM test_table;
+SQL
+----
+
+== Zero-Trust 強制の証明
+
+Zero Trust は「内部ネットワークを信頼する」ではなく、**すべての接続を検証する**ことを意味します。攻撃者がポート 5432 に到達できたとしても、有効な SPIFFE アイデンティティがなければ失敗する必要があります。
+
+. 接続文字列からクライアントの証明書とキーを意図的に省略します。
++
+[source,bash,subs="+macros,+attributes",role=execute]
+----
+oc rsh -n postgresql-spiffe-client -c postgresql-spiffe-client deployment/postgresql-spiffe-client \
+  psql "host=postgresql-spiffe.postgresql-spiffe.svc port=5432 user=postgresql_spiffe dbname=testdb sslmode=require" \
+  2>&1 | head -5
+----
++
+期待されるエラー：
++
+[source,text]
+----
+psql: error: connection to server at "postgresql-spiffe.postgresql-spiffe.svc" failed:
+FATAL: connection requires a valid client certificate
+----
+
+ネットワーク接続性だけでは不十分です。PostgreSQL の `pg_hba.conf` は SSL **および** 有効なクライアント証明書 (`hostssl ... cert`) を要求し、`postgresql_spiffe` ユーザーに対してパスワードによるバイパスは存在しません。
+
+. 同じネームスペース内でランダムな Pod を起動し（SPIFFE サイドカーなし、発行された証明書なし）、再試行します。
++
+[source,bash,subs="+macros,+attributes",role=execute]
+----
+oc run unauthorized-client --image=registry.redhat.io/rhel9/postgresql-16:latest \
+  -n postgresql-spiffe-client --command -- sleep infinity
+oc wait --for=condition=Ready pod/unauthorized-client -n postgresql-spiffe-client --timeout=60s
+oc exec -n postgresql-spiffe-client unauthorized-client -- \
+  psql "host=postgresql-spiffe.postgresql-spiffe.svc port=5432 user=postgresql_spiffe dbname=testdb" \
+  2>&1 | head -3
+----
++
+`connection requires a valid client certificate` と表示されるはずです。同じネームスペースにある Pod であっても、有効な SPIFFE 証明書がなければ接続できません。NetworkPolicy が通信を許可したとしても、PostgreSQL は拒否します。
++
+. テスト Pod を削除します。
++
+[source,bash,subs="+macros,+attributes",role=execute]
+----
+oc delete pod unauthorized-client -n postgresql-spiffe-client
+----
+
+== 自動証明書ローテーションの観察
+
+静的パスワードは、誰かが気づくまで放置され劣化します。SPIFFE 証明書はスケジュールに従って期限切れになり、`spiffe-helper` はアプリケーションコンテナを再起動することなく、期限切れになる前に証明書を更新します。
+
+.手順
+. 2つのペインで tmux を起動します。
++
+[source,bash,subs="+macros,+attributes",role=execute]
+----
+tmux new-session \; split-window -v \; attach
+----
++
+. 最初のペインで、`spiffe-helper` のログを追跡します。
++
+[source,bash,subs="+macros,+attributes",role=execute]
+----
+oc logs -n postgresql-spiffe-client -l app=postgresql-spiffe-client -c spiffe-helper --tail=20 -f
+----
++
+. *Ctrl+b* を押し、次に *o* を押して2番目のペインに切り替えます。
++
+[IMPORTANT]
+====
+`Ctrl+b` は tmux のプレフィックスキーです。`o` は次のペインに切り替えます。
+====
++
+. 2番目のペインで、現在の証明書のシリアル番号と有効期限を取得します。
++
+[source,bash,subs="+macros,+attributes",role=execute]
+----
+oc rsh -n postgresql-spiffe-client -c postgresql-spiffe-client deployment/postgresql-spiffe-client \
+  sh -c 'openssl x509 -in /opt/postgresql-certs/svid.pem -noout -serial -enddate'
+----
++
+[NOTE]
+====
+ローテーションは、証明書のライフサイクルに紐付けられたスケジュールに従って発生します（有効期限のおよそ30分前）。短時間のラボでは、最初の `X.509 certificates updated` イベントのみが表示される場合があります。それでもサイドカーが監視し、証明書を書き込んでいることが確認できます。
+====
++
+. シリアル番号を再確認し、データベース接続が引き続き機能することを確認します。
++
+[source,bash,subs="+macros,+attributes",role=execute]
+----
+oc rsh -n postgresql-spiffe-client -c postgresql-spiffe-client deployment/postgresql-spiffe-client \
+  sh -c 'openssl x509 -in /opt/postgresql-certs/svid.pem -noout -serial -enddate'
+oc rsh -n postgresql-spiffe-client -c postgresql-spiffe-client deployment/postgresql-spiffe-client \
+  psql "host=postgresql-spiffe.postgresql-spiffe.svc port=5432 user=postgresql_spiffe dbname=testdb sslmode=verify-full sslcert=/opt/postgresql-certs/svid.pem sslkey=/opt/postgresql-certs/svid.key sslrootcert=/opt/postgresql-certs/svid_bundle.pem" \
+  -c "SELECT 'Connection successful after rotation' AS status;"
+----
++
+. tmux を終了し、バスティオンホストのターミナルに戻ります。
+.. `exit` と入力するか、*Ctrl-D* を押して tmux セッションを離れます。
+.. `oc logs` がまだ実行されている場合は、最初のペインで *Ctrl+C* を押します。
+.. `exit` と入力して tmux セッションを終了します。
++
+
+おめでとうございます！新しいシリアル番号、同じ信頼チェーン、中断のないアクセスを確認できました。これが午前2時のパスワードローテーションのランブックを必要としない、運用の Zero-Trust です。
+
+== クリーンアップ
+
+.手順
+. クリーンアップスクリプトを実行します。
++
+[source,bash,subs="+macros,+attributes",role=execute]
+----
+cd ~/openshift-days-ops-showroom/setup-scripts/ztwim-config-scripts
+./configure-ztwim-postgresql-lab.sh cleanup
+----
+
+== まとめ
+
+**素晴らしい仕事です！** 暗号化されたワークロードアイデンティティと相互 TLS を使用して、データベースアクセスを保護しました。
+
+要約すると:
+
+* このクラスター上の *ZTWIM* は、ワークロードアイデンティティ用の SPIRE サーバー、エージェント、CSI ドライバー、および OIDC ディスカバリを提供します。
+* *SPIFFE ワークロードアイデンティティ* は、X.509 証明書を Kubernetes のネームスペースとサービスアカウントにバインドし、静的なデータベースパスワードを置き換えます。
+* *相互 TLS* は双方向の証明書検証を強制します。クライアントとサーバーの両方が暗号論的なアイデンティティを証明します。
+* *短期間有効な証明書*（約1時間）は、曝露ウィンドウを制限し、`spiffe-helper` サイドカーを介して自動的にローテーションします。
+* *Zero-Trust の強制*: 有効な SPIFFE 証明書を持たない接続は、ネットワークアクセスに関係なく拒否されます。
+
+これは、より大規模な Zero-Trust アーキテクチャにおける1つのステップです。Red Hat には、セキュアなクラスターを構築するための https://github.com/validatedpatterns/layered-zero-trust[Layered Zero Trust Validated Pattern] と呼ばれるフレームワークがあります。リンクをたどることで、パターンと自身のセキュアなクラスターの構築方法についてさらに詳しく学ぶことができます。
+
+ワークショップの次のトピックに進む準備ができたら、次へ進んでください。

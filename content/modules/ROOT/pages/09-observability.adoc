@@ -1,0 +1,654 @@
+= 可視性とログ記録
+:page-toclevels: 1
+
+**所要時間:** 35〜40 分 +
+**形式:** ハンズオンでの可視性構成
+
+include::partial$console-access.adoc[]
+
+== シナリオ
+
+お使いのクラスターで何らかの異常が発生しています。どうやってそれを確認しますか？どこを見ればよいでしょうか？もしそれを30秒以内に答えることができない場合、可視性（Observability）スタックはまだ本番環境の準備ができていません。
+
+このモジュールでは、すでに稼働しているメトリクスとアラート（Prometheus、Alertmanager）を調査し、ログを実際に検索できるようにログパイプライン（Loki、Vector）をセットアップし、サービス間のリクエストを追跡するための分散トレーシング（OpenTelemetry、Tempo）をデプロイします。
+
+image::diagrams/09_observability.png[OpenShift Monitoring Architecture, align=center, link=self, window=blank]
+TIP: 前のモジュールで別のユーザーとしてログインしていた場合は、管理者としてログインし直してください。コンソール: ユーザー名 `{openshift_cluster_admin_username}` / パスワード `{openshift_cluster_admin_password}`。ターミナル: `oc login -u {openshift_cluster_admin_username} -p {openshift_cluster_admin_password}`
+
+== Prometheus による組み込みメトリクス
+
+OpenShift には、完全に管理された Prometheus スタックが標準で備わっており、インストールは不要です。これはクラスター内のあらゆるコンポーネントからメトリクスを収集します。
+
+=== クラスターメトリクスの探索
+
+すでに稼働している Prometheus Pod を確認します：
+
+[source,bash,role="execute"]
+----
+oc get pods -n openshift-monitoring -l app.kubernetes.io/name=prometheus
+----
+
+コンソールのメトリクスビューアを使用して、クラスターの CPU 使用率をクエリします：
+
+1. **OCP Console** タブに切り替えます
+2. **Observe -> Metrics** に移動します
+3. クエリを入力します: `cluster:cpu_usage_cores:sum`
+4. **Run Queries** をクリックします
+
+時間の経過に伴うクラスターの CPU 使用率を示す時系列グラフが表示されます。これは、ある一時点の数値を見るよりもはるかに有用です。
+
+image::observe-metrics-query.png[Observe Metrics page showing cluster CPU usage query result, link=self, window=blank]
+TIP: `node_memory_MemAvailable_bytes` や `kubelet_running_pods` などの他のクエリを試して、どのようなメトリクスが利用可能か探索してみてください。
+
+CLI で迅速に確認したい場合は、以下も使用できます：
+
+[source,bash,role="execute"]
+----
+oc adm top nodes
+----
+
+[source,bash,role="execute"]
+----
+oc adm top pods -A --sort-by=cpu | head -15
+----
+
+=== コンソールのダッシュボード
+
+OpenShift コンソールで **Observe -> Dashboards** に移動します。主なダッシュボードには以下が含まれます：
+
+image::observe-dashboards-list.png[Observe Dashboards showing Kubernetes Compute Resources Cluster dashboard, link=self, window=blank]
+* **etcd** - コントロールプレーンデータベースの健全性
+* **Kubernetes / Compute Resources / Cluster** - クラスター全体の CPU とメモリ
+* **Kubernetes / Compute Resources / Namespace (Pods)** - ネームスペースごとの内訳
+* **Node Exporter / USE Method / Cluster** - 使用率 (Utilization)、飽和度 (Saturation)、エラー (Errors)
+
+=== ユーザーワークロードモニタリング
+
+OpenShift は、独自作成のアプリケーションからメトリクスを収集することもできます。ユーザーワークロードモニタリングはデフォルトでは有効になっていませんが、このワークショップクラスターでは事前に有効化されています。稼働中であることを確認します：
+
+[source,bash,role="execute"]
+----
+oc get pods -n openshift-user-workload-monitoring
+----
+
+Pod が実行中であれば、`/metrics` エンドポイントを公開しているすべてのアプリケーションは、`ServiceMonitor` または `PodMonitor` リソースを作成することでメトリクスを収集できるようになります。
+
+NOTE: これはワークショップクラスターですでに有効化されているため、実行する必要はありません。ご自身のクラスターで有効化する場合は、以下を適用します：
+
+[source,bash,role="copypaste"]
+----
+# 実行不要 - このクラスターでは構成済みです
+oc apply -f - <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-monitoring-config
+  namespace: openshift-monitoring
+data:
+  config.yaml: |
+    enableUserWorkload: true
+EOF
+----
+
+Prometheus の `/metrics` エンドポイントを公開しているアプリケーションは、それを指定する `ServiceMonitor` を作成することで収集対象になります。これにより、Horizontal Pod Autoscaler (HPA) がスケーリングの判断に使用するカスタムメトリクスを取得できるようになります。
+
+== Alertmanager によるアラート通知
+
+OpenShift には、通知チャネル（メール、Slack、PagerDuty、Webフック）にアラートをルーティングするための Alertmanager が含まれています。
+
+=== 現在のアラートの確認
+
+どのようなアラートルールが存在するか確認します：
+
+[source,bash,role="execute"]
+----
+oc get prometheusrules -A | head -15
+----
+
+コンソールの **Observe -> Alerting** からもアラートを確認できます。
+
+=== カスタムアラートの作成
+
+アプリケーションネームスペース用のアラートを独自に定義できます。以下は、Pod が再起動を繰り返している場合に発火する例です。組み込みのアラートルールが存在する `openshift-monitoring` ネームスペースにこれを作成します：
+
+[source,bash,role="execute"]
+----
+cat <<EOF | oc apply -f -
+apiVersion: monitoring.openshift.io/v1
+kind: AlertingRule
+metadata:
+  name: ops-track-alerts
+  namespace: openshift-monitoring
+spec:
+  groups:
+  - name: ops-track
+    rules:
+    - alert: HighPodRestartRate
+      expr: increase(kube_pod_container_status_restarts_total[5m]) > 2
+      for: 1m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Pod {{ \$labels.pod }} restarting frequently"
+        description: "Pod {{ \$labels.pod }} in {{ \$labels.namespace }} has restarted more than 2 times in 5 minutes."
+EOF
+----
+
+ルールが作成されたことを確認します：
+
+[source,bash,role="execute"]
+----
+oc get alertingrule ops-track-alerts -n openshift-monitoring
+----
+
+ルールは存在しますが、まだトリガーされていません。これを発生させてみましょう。クラッシュループする Pod をデプロイし、アラートが Inactive から Pending、Firing へと遷移する様子を確認します：
+
+[source,bash,role="execute"]
+----
+oc new-project alert-demo 2>/dev/null || oc project alert-demo
+cat <<EOF | oc apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: crashloop-test
+  namespace: alert-demo
+spec:
+  containers:
+  - name: crash
+    image: registry.access.redhat.com/ubi9/ubi-minimal
+    command: ["/bin/sh", "-c", "echo 'Starting...'; sleep 2; exit 1"]
+  restartPolicy: Always
+EOF
+echo "Crash-looping pod deployed - it will restart every few seconds"
+----
+
+再起動が蓄積される間に、コンソールの **Observe -> Alerting -> Alerting Rules** に移動し、`HighPodRestartRate` を検索します。Prometheus が新しいルールを検出するまでに 1〜2 分かかる場合があります。表示されない場合は、ページを再読み込みし、検索前に **Clear all filters** をクリックするか既存のフィルターチップを削除（**x** をクリック）してください。
+
+image::alerting-rules-search.png[Alerting Rules showing custom HighPodRestartRate rule, link=self, window=blank]
+ルールをクリックして詳細を確認します。約 2〜3 分後（Pod が数回再起動し、`for: 1m` の期間が経過した後）、アラートのステータスが **Inactive** → **Pending** → **Firing** に変化します：
+
+image::alerting-rule-detail.png[HighPodRestartRate rule detail showing expression and active alerts, link=self, window=blank]
+次に **Alerting → Alerts** に移動します。`HighPodRestartRate` が表示されているはずです。アラートをクリックし、下部の **Description** をクリックして詳細を確認すると、ソース Pod として `crashloop-test` が表示されています：
+
+image::alerts-firing.png[Alerts tab showing currently firing alerts with severity and state, link=self, window=blank]
+これがオンコールエンジニアが常に確認している画面です。ルールを作成し、実際の障害によってトリガーさせ、アラートが発火するのを確認することができました。クラッシュループしている Pod を削除してクリーンアップします：
+
+[source,bash,role="execute"]
+----
+oc delete pod crashloop-test -n alert-demo --ignore-not-found
+----
+
+=== メールへのアラート送信
+
+アラートが発火しましたが、誰に通知が届いたでしょうか？現時点では誰にも届いていません。Alertmanager にはレシーバーが構成されていますが（Default、Watchdog、Critical）、どれも実際に通知を送信するように構成されていません。アラートは発火し、コンソールに表示されますが、それだけです。
+
+本番環境では、これは夜間のインシデントに誰も気づかず、翌朝誰かがコンソールを確認するまで放置されることを意味します。メール通知を設定してこれを修正しましょう。
+
+**メールサーバーのデプロイ**
+
+Mailpit をデプロイします。これはメールをキャッチして Web インボックスに表示する軽量なメールサーバーです。本番環境で内部メールリレーが処理する動作をシミュレートします：
+
+[source,bash,role="execute"]
+----
+bash <(curl -sL https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/main/support/09-observability/deploy-mailpit.sh)
+----
+
+**Alertmanager の設定**
+
+Mailpit 経由でメールを送信するように Alertmanager を設定します。これにより、Warning アラートは `ops-team@example.com` に、Critical アラートは `oncall@example.com` にルーティングされます：
+
+[source,bash,role="execute"]
+----
+bash <(curl -sL https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/main/support/09-observability/configure-alertmanager-email.sh)
+----
+
+スクリプトによって Mailpit インボックスの URL が出力されます。クリックするかブラウザにコピーしてください。1 分以内にアラートメールが届くのが確認できます：
+
+image::alerting-mailpit-inbox.png[Mailpit inbox showing alert notification emails from Alertmanager, link=self, window=blank]
+ルーティングに注目してください：
+
+* **Warning** アラート（`PodDisruptionBudgetAtLimit` や `KubeCPUOvercommit` など）は `ops-team@example.com` に届きます
+* **Critical** アラートは `oncall@example.com` に届きます
+
+任意のメールをクリックして、アラート名、ネームスペース、重要度、説明、Alertmanager UI へのリンクなど、完全なアラート詳細を確認してください。
+
+本番環境では、`mailpit.alert-demo.svc:1025` を組織の SMTP リレーに置き換え、実際のメールアドレスを使用します。Alertmanager は、同じルーティング構造を使用して Slack、PagerDuty、および Web フックもサポートしています。詳細は link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/monitoring/managing-alerts#sending-notifications-to-external-systems_managing-alerts[外部システムへの通知の送信, window=blank] を参照してください。
+
+**Alertmanager の復元**
+
+Alertmanager をデフォルト設定に戻し、クリーンアップします：
+
+[source,bash,role="execute"]
+----
+bash <(curl -sL https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/main/support/09-observability/restore-alertmanager.sh)
+----
+
+**まとめ:** 誰も受信しないアラートは、アラートが存在しないのと同じです。レシーバーの設定は、新しいクラスターで最初に行うべきことの 1 つです。これがなければ、モニタリングはただの飾りにすぎません。
+
+== ログスタックのセットアップ
+
+メトリクスが「*何が*起きているか」を伝えるのに対し、ログは「*なぜ*起きているか」を伝えます。OpenShift のログスタックには 3 つの層があります。本番環境でログ収集が停止した際にどの層をトラブルシューティングすべきか把握するために、各層を理解しておく必要があります。
+
+=== アーキテクチャ
+
+ログパイプラインの仕組みは以下のとおりです：
+
+1. **コレクター (Vector)** が各ノード上で実行され、コンテナ、OS、および Kubernetes API からログを収集します
+2. **Loki** がログを保存およびインデックス化します（S3 互換オブジェクトストレージによってバックアップされます）
+3. **コンソール UI プラグイン** により、OpenShift Web コンソールからログをクエリできるようになります
+
+各層は個別のオペレーターによって管理されるため、それぞれ独立してアップグレードやトラブルシューティングを行うことができます。
+
+=== ログオペレーターのインストール
+
+3 つのオペレーターが必要です。それぞれがパイプラインの異なる部分を管理します。まず、必要なネームスペースと OperatorGroup を作成します：
+
+[source,bash,role="execute"]
+----
+oc create namespace openshift-operators-redhat 2>/dev/null || true
+oc create namespace openshift-logging 2>/dev/null || true
+cat <<EOF | oc apply -f -
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: openshift-operators-redhat
+  namespace: openshift-operators-redhat
+spec: {}
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: cluster-logging
+  namespace: openshift-logging
+spec:
+  targetNamespaces:
+  - openshift-logging
+EOF
+----
+
+ソフトウェアカタログから Loki Operator をインストールします。これは OperatorHub の他のオペレーターと同じ手順です。
+
+**Loki Operator (ログストレージ)**
+
+1. **Ecosystem -> Software Catalog** に移動します
+2. **Loki Operator** を検索します
+3. **Loki Operator** タイルをクリックします（snapshot-lightspeed ではなく、**Red Hat** と記載されているものを選択します）
++
+image::obs-loki-operator-details.png[Loki Operator details with Install button highlighted, link=self, window=blank]
++
+4. **Install** をクリックします
+5. インストール設定ページで、すべてのデフォルト値（チャネル、ネームスペース、承認）のまま **Install** をクリックします
++
+image::obs-loki-install-config.png[Loki Operator install configuration page, link=self, window=blank]
+「Installing Operator」の確認画面が表示されます：
+
+image::obs-loki-installing.png[Loki Operator installing confirmation, link=self, window=blank]
+**残りのオペレーター**
+
+OperatorHub の動作を確認しました。残りのオペレーターも同じプロセスを使用するため、スクリプトで自動実行します。完了までに数分かかります：
+
+[source,bash,role="execute"]
+----
+bash <(curl -sL https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/main/support/09-observability/install-operators.sh)
+----
+
+すべてのオペレーターがインストールされたことを確認します：
+
+[source,bash,role="execute"]
+----
+oc get csv -n openshift-logging --no-headers | grep -i logging && \
+oc get csv -n openshift-operators --no-headers | grep -iE 'tempo|opentelemetry|observability'
+----
+
+=== ログストレージの設定 (Loki + S3)
+
+Loki はログデータ用にオブジェクトストレージを必要とします。このクラスターには OpenShift Data Foundation (ODF) が備わっており、NooBaa を介して S3 互換ストレージを提供します。本番環境では、これを AWS S3、Azure Blob、または任意の S3 互換ストアに指定します。
+
+ログストレージ用の S3 バケットを作成します：
+
+[source,bash,role="execute"]
+----
+cat <<EOF | oc apply -f -
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: loki-bucket
+  namespace: openshift-logging
+spec:
+  generateBucketName: loki-bucket
+  storageClassName: openshift-storage.noobaa.io  # ODFのS3プロバイダー
+EOF
+----
+
+バケットがプロビジョニングされるまで待ちます：
+
+[source,bash,role="execute"]
+----
+oc wait --for=jsonpath='{.status.phase}'=Bound obc/loki-bucket -n openshift-logging --timeout=60s
+----
+
+変数がスコープ内に維持されるよう、S3 認証情報の抽出、CA 証明書 ConfigMap の作成、および LokiStack のデプロイを 1 つのブロックでまとめて実行します：
+
+[source,bash,role="execute"]
+----
+bash <(curl -sL https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/main/support/09-observability/setup-loki-storage.sh)
+----
+
+=== ログ収集のセットアップ
+
+ClusterLogForwarder は、何を収集し、どこへ送信するかを Vector (コレクター) に指示します。コレクターは DaemonSet として実行され（各ノードに 1 つの Pod）、すべてのノード上のすべてのコンテナからログを収集します。
+
+必要な権限を持つコレクターサービスアカウントを作成します：
+
+[source,bash,role="execute"]
+----
+oc create sa collector -n openshift-logging
+oc adm policy add-cluster-role-to-user logging-collector-logs-writer -z collector -n openshift-logging
+oc adm policy add-cluster-role-to-user collect-application-logs -z collector -n openshift-logging
+oc adm policy add-cluster-role-to-user collect-audit-logs -z collector -n openshift-logging
+oc adm policy add-cluster-role-to-user collect-infrastructure-logs -z collector -n openshift-logging
+----
+
+LokiStack ゲートウェイ CA バンドルが作成されるまで待ちます（ClusterLogForwarder に必要です）：
+
+[source,bash,role="execute"]
+----
+echo "Waiting for LokiStack gateway CA bundle..."
+ELAPSED=0
+until oc get configmap logging-loki-gateway-ca-bundle -n openshift-logging 2>/dev/null; do
+  sleep 5; ELAPSED=$((ELAPSED+5))
+  [ $ELAPSED -ge 300 ] && echo "ERROR: Timed out waiting for CA bundle" && break
+done
+echo "CA bundle ready"
+----
+
+ClusterLogForwarder を作成します。これがパイプラインを定義します：
+
+[source,bash,role="execute"]
+----
+bash <(curl -sL https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/main/support/09-observability/setup-log-forwarding.sh)
+----
+
+=== ログ UI の有効化
+
+UIPlugin は、OpenShift コンソールに **Observe -> Logs** ビューを追加します。以下のコマンドを実行して有効化します。表示されるまでに数分かかる場合があります：
+
+[source,bash,role="execute"]
+----
+cat <<EOF | oc apply -f -
+apiVersion: observability.openshift.io/v1alpha1
+kind: UIPlugin
+metadata:
+  name: logging
+spec:
+  type: Logging
+  logging:
+    lokiStack:
+      name: logging-loki
+EOF
+----
+
+=== ログの検証と表示
+
+スタック全体を検証する前に、コレクター Pod が起動するまで待ちます：
+
+[source,bash,role="execute"]
+----
+echo "Waiting for collector pods to start..."
+ELAPSED=0
+until oc get pods -n openshift-logging -l app.kubernetes.io/component=collector --no-headers 2>/dev/null | grep -q Running; do
+  sleep 10; ELAPSED=$((ELAPSED+10))
+  [ $ELAPSED -ge 300 ] && echo "ERROR: Timed out - check 'oc get pods -n openshift-logging'" && break
+done
+oc get pods -n openshift-logging
+----
+
+ロギングオペレーター、コレクター Pod（ノードごとに 1 つ）、および複数の Loki コンポーネント Pod がすべて `Running` になっている必要があります。
+
+UIPlugin が作成されると、コンソールに通知が表示される場合があります：
+
+image::Loki_refresh.png[Web console update notification, link=self, window=blank]
+**Refresh** をクリックしてコンソールを再読み込みし、新しい Logs ビューを表示します。これによりコンソールからログアウトされる場合があります。その場合は以下でログインし直してください：
+
+* ユーザー名: `{openshift_cluster_admin_username}`
+* パスワード: `{openshift_cluster_admin_password}`
+
+コンソールで **Observe -> Logs** に移動します。ログタイプのドロップダウン（下記で赤くハイライトされている部分）を使用して、3 つのログタイプを切り替えます：
+
+image::observe-logs-view.png[Observe Logs view with log type dropdown highlighted, link=self, window=blank]
+* **Application** - ユーザーワークロードからのログ
+* **Infrastructure** - OpenShift コンポーネントからのログ
+* **Audit** - Kubernetes API 監査ログ
+
+image::appinfraaudit.png[Log type selector, link=self, window=blank]
+フィルターを使用して、ネームスペース、Pod 名、または重要度レベルで検索します：
+
+image::filterlogs.png[Log filters, link=self, window=blank]
+重要度 (Critical、Error、Warning、Info、Debug) でフィルター処理します：
+
+image::severity.png[Severity filter, link=self, window=blank]
+実際に試してみましょう：**Infrastructure** ログを選択し、重要度 **Warning** または **Error** でフィルターを設定します。これらは、インシデント発生時に重要となるログエントリー（Pod の Eviction、OOM Kill、証明書の期限切れ警告など）です。
+
+右上の **Show Histogram**（下記で赤くハイライトされている部分）をクリックして、時間の経過に伴うログボリュームを表示します。エラー数の急増はインシデントと相関します。クリックしてドラッグすることで時間ウィンドウを選択し、ズームインできます。
+
+image::histogram.png[Log histogram, link=self, window=blank]
+[NOTE]
+====
+コレクター Pod が稼働し始めてからログが表示され始めるまでに 1〜2 分かかる場合があります。「No datapoints found」と表示された場合は、少し待ってから再読み込みしてください。
+====
+
+== 分散トレーシングのための OpenTelemetry
+
+メトリクスは「*何が*起きているか」を伝えます。ログは「*なぜ*起きているか」を伝えます。**トレース**は「*どこで*起きているか」を伝えます。リクエストが複数のマイクロサービスにまたがる場合、トレースはすべてのサービスにわたる正確な経路とタイミングを表示します。ユーザーから「チェックアウト処理が遅い」と報告された場合、トレースは「フロントエンド (2ms) → API ゲートウェイ (5ms) → 在庫サービス (800ms) → 決済 (3ms)」のように表示するため、在庫サービスがボトルネックであることを即座に把握できます。
+
+開発者は OpenTelemetry SDK を使用してアプリを計測しますが、運用チームはトレーシングインフラストラクチャを所有します。つまり、コレクターをデプロイし、ストレージバックエンドを管理し、コンソールでトレースを可視化します。
+
+Tempo および OpenTelemetry オペレーターは、先ほどのスクリプトブロックですでにインストールされています。トレーシングバックエンドをデプロイしましょう。
+
+=== Tempo のデプロイ (トレースストレージ)
+
+Tempo は、Loki がログを保存するのと同様に、トレースを保存およびインデックス化するバックエンドです。ここでは、ワークショップや小規模クラスターに適した単一バイナリ展開である TempoMonolithic を使用します。
+
+ネームスペースを作成し、マルチテナンシーを有効にして TempoMonolithic をデプロイします：
+
+[source,bash,role="execute"]
+----
+oc create namespace tracing-system 2>/dev/null || true
+cat <<EOF | oc apply -f -
+apiVersion: tempo.grafana.com/v1alpha1
+kind: TempoMonolithic
+metadata:
+  name: sample
+  namespace: tracing-system
+spec:
+  storage:
+    traces:
+      backend: pv
+      size: 10Gi
+  jaegerui:
+    enabled: true
+    route:
+      enabled: true
+  multitenancy:
+    enabled: true
+    mode: openshift
+    authentication:
+      - tenantName: dev
+        tenantId: "1610b0c3-c509-4592-a256-a1871353dbfa"
+EOF
+----
+
+NOTE: コンソールの Traces UI が Tempo インスタンスを検出するには、マルチテナンシーが必要です。`openshift` モードは OpenShift の組み込み認証を使用するため、外部の OIDC 設定は不要です。
+
+Tempo の準備ができるまで待ちます：
+
+[source,bash,role="execute"]
+----
+echo "Waiting for Tempo pod..."
+ELAPSED=0
+until oc get pods -n tracing-system -l app.kubernetes.io/component=tempo 2>/dev/null | grep -q Running; do
+  sleep 10; ELAPSED=$((ELAPSED+10))
+  [ $ELAPSED -ge 180 ] && echo "ERROR: Timed out" && break
+done
+oc get pods -n tracing-system -l app.kubernetes.io/component=tempo
+----
+
+=== RBAC のセットアップ
+
+トレーシングパイプラインには 2 つの権限セットが必要です。コレクターにはトレースをプッシュするための書き込みアクセス権が必要であり、ユーザーにはトレースをクエリするための読み取りアクセス権が必要です。
+
+[source,bash,role="execute"]
+----
+bash <(curl -sL https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/main/support/09-observability/setup-tracing-rbac.sh)
+----
+
+=== OpenTelemetry コレクターのデプロイ
+
+コレクターは、トレースデータを受信する中央ステーションです。アプリはトレースをコレクターに送信し、コレクターは保存のためにトレースを Tempo に転送します。ログにおける Vector のようなもので、プロデューサーとストレージの間に位置するパイプラインコンポーネントと考えられます。
+
+[source,bash,role="execute"]
+----
+bash <(curl -sL https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/main/support/09-observability/setup-otel-collector.sh)
+----
+
+このコレクターの機能：
+
+* ポート 4317 (gRPC) および 4318 (HTTP) で OTLP 経由のトレースを**受信**
+* 効率化のため着信スパンを**バッチ処理**
+* サービスアカウントトークンで認証し、Tempo ゲートウェイへ**エクスポート**
+
+コレクターが実行中であることを確認します：
+
+[source,bash,role="execute"]
+----
+oc get pods -n tracing-system
+----
+
+Tempo Pod とコレクター Pod の両方が `Running` になっている必要があります。
+
+=== Traces コンソール UI の有効化
+
+ログ UI と同様に、Traces ビューには UIPlugin が必要です：
+
+[source,bash,role="execute"]
+----
+cat <<EOF | oc apply -f -
+apiVersion: observability.openshift.io/v1alpha1
+kind: UIPlugin
+metadata:
+  name: distributed-tracing
+spec:
+  type: DistributedTracing
+EOF
+----
+
+再読み込みを促すコンソール通知が表示される場合があります。**Refresh** をクリックして再読み込みします。
+
+=== テストトレースの送信
+
+コレクターの準備はできましたが、まだ何もトレースを送信していません。パイプライン全体を検証するために、テストトレースを送信してみましょう：
+
+[source,bash,role="execute"]
+----
+oc run test-trace --rm -i --restart=Never \
+  --image=registry.access.redhat.com/ubi9/ubi-minimal \
+  -n tracing-system -- sh -c '
+TIMESTAMP=$(date +%s)
+curl -s -X POST http://otel-collector.tracing-system.svc:4318/v1/traces \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"resourceSpans\": [{
+      \"resource\": {
+        \"attributes\": [{\"key\": \"service.name\", \"value\": {\"stringValue\": \"workshop-demo\"}}]
+      },
+      \"scopeSpans\": [{
+        \"spans\": [{
+          \"traceId\": \"11112222333344445555666677778888\",
+          \"spanId\": \"aaaa222233334444\",
+          \"name\": \"GET /api/weather\",
+          \"kind\": 2,
+          \"startTimeUnixNano\": \"${TIMESTAMP}000000000\",
+          \"endTimeUnixNano\": \"${TIMESTAMP}500000000\",
+          \"attributes\": [{\"key\": \"http.method\", \"value\": {\"stringValue\": \"GET\"}}]
+        }]
+      }]
+    }]
+  }" && echo "Trace sent successfully"
+'
+----
+
+これは、計測されたアプリケーションの動作（単一の操作 `GET /api/weather` を記述するスパンとタイミングデータの送信）をシミュレートしています。
+
+=== コンソールでのトレースの表示
+
+Traces ビューを読み込むと、コンソールからログアウトされる場合があります。その場合は以下でログインし直してください：
+
+* ユーザー名: `{openshift_cluster_admin_username}`
+* パスワード: `{openshift_cluster_admin_password}`
+
+コンソールで **Observe -> Traces** に移動します。Tempo インスタンス (`tracing-system / sample`) とテナント (`dev`) を選択します：
+
+image::otel-traces-view.png[Observe Traces view showing workshop-demo trace with scatter graph, link=self, window=blank]
+`workshop-demo` トレースが表示されるはずです。クリックしてトレースの詳細ビューを表示します。各スパンを示すタイミングウォーターフォールが表示されます：
+
+image::otel-trace-detail.png[Trace detail view showing GET /api/weather span with 500ms duration, link=self, window=blank]
+単一のサービスの場合、これは 1 つのスパンを示します。実際のマイクロサービスアプリケーションでは、ウォーターフォール状にスタックされた複数のスパン（フロントエンド → API → データベース）が表示され、遅延がどこで発生しているかが一目でわかります。
+
+コレクターは本番環境で使用できる状態になりました。開発者は OpenTelemetry SDK を使用してアプリの送信先を `otel-collector.tracing-system.svc:4317` に指定するだけで、トレースが自動的にここに表示されます。
+
+== クリーンアップとまとめ
+
+デプロイした可視性リソースを削除します。Prometheus モニタリングスタックは組み込みのため、クリーンアップは不要です。
+
+[source,bash,role="execute"]
+----
+bash <(curl -sL https://raw.githubusercontent.com/rhpds/openshift-days-ops-showroom/main/support/cleanup-scripts/cleanup-observability.sh)
+----
+
+=== まとめ
+
+**学んだこと：**
+
+* OpenShift の組み込み Prometheus スタックは、セットアップなしでメトリクスとダッシュボードを提供する
+* AlertingRule を使用してカスタムアラートルールを作成し、メール通知を設定する方法
+* 完全なログスタック (Loki + Vector) をインストールして設定する方法
+* OpenShift コンソールでログを表示およびフィルター処理する方法
+* OpenTelemetry トレーシングパイプライン (Tempo + OTel Collector) をデプロイする方法
+* コンソールで分散トレースを表示する方法
+
+メトリクス、ログ、トレースを組み合わせることで、**可視性の3つの柱 (Three Pillars of Observability)** が完成します。それぞれがクラスターとワークロードに関する異なる質問に答えてくれます。
+
+**主要な運用コマンド:**
+
+[source,bash]
+----
+# クラスターメトリクス
+oc adm top nodes
+oc adm top pods -A --sort-by=cpu | head -15
+
+# アラートルールの表示
+oc get prometheusrules -A
+
+# ロギング Pod の表示
+oc get pods -n openshift-logging
+
+# LokiStack ステータスの確認
+oc get lokistack -n openshift-logging
+
+# ClusterLogForwarder ステータスの確認
+oc get clusterlogforwarder -n openshift-logging
+
+# トレーシング Pod の表示
+oc get pods -n tracing-system
+
+# TempoMonolithic ステータスの確認
+oc get tempomonolithic -n tracing-system
+----
+
+=== 追加リソース
+
+* **OpenShift モニタリング:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/monitoring/index[Monitoring, window=blank]
+* **OpenShift ロギングドキュメント:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/logging/index[Logging, window=blank]
+* **Logging 6.2 スタック:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/logging/logging-6-2[Logging 6.2, window=blank]
+* **OpenShift 分散トレーシング:** link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/distributed_tracing/index[Distributed Tracing, window=blank]
+* **Red Hat build of OpenTelemetry:** link:https://docs.redhat.com/en/documentation/red_hat_build_of_opentelemetry/[OpenTelemetry, window=blank]

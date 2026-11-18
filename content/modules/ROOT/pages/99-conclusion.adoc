@@ -1,0 +1,11 @@
+= Thank You for Completing the Workshop
+
+**OpenShift Ops Day Roadshow にご参加いただき、ありがとうございました。**
+
+ハンズオン演習が皆様のお役に立ちましたら幸いです。ご質問がございましたら、インストラクターにお尋ねください。
+
+== Additional Resources
+
+* link:https://docs.redhat.com/en/documentation/openshift_container_platform/4.20[OpenShift Documentation, window=blank]
+* link:https://developers.redhat.com/learn/openshift[OpenShift Learning, window=blank]
+* link:https://www.redhat.com/en/services/training-and-certification[Red Hat Training & Certification, window=blank]

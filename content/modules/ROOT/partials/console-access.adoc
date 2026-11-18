@@ -1,0 +1,9 @@
+.Console Access
+[%collapsible]
+====
+* *Username:* `{openshift_cluster_admin_username}`
+* *Password:* `{openshift_cluster_admin_password}`
+* *Console:* {openshift_cluster_console_url}[window=blank]
+
+TIP: こちらの Showroom インターフェース内にある **OCP Console** タブをご利用いただくと、手順を追いやすいためおすすめです。
+====

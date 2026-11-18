@@ -1,0 +1,463 @@
+= セットアップと概要
+:page-toclevels: 1
+
+**所要時間:** 15-20 分 +
+**形式:** ハンズオンデモ
+
+include::partial$console-access.adoc[]
+
+image::ops-day-banner.png[OpenShift Ops Day, width=100%]
+
+== さあ、始めましょう
+
+あなたには、稼働中の OpenShift クラスターへの cluster-admin（クラスター管理者）アクセス権が付与されています。すべてが正常に動作しているか確認しましょう。以下のコマンドをクリックしてください：
+
+[source,bash,role="execute"]
+----
+oc whoami
+----
+
+管理者ユーザーが表示されるはずです。
+
+[source,bash,role="execute"]
+----
+oc get nodes
+----
+
+3つのノードが表示され、すべて `Ready` 状態になっているはずです。
+
+[source,bash,role="execute"]
+----
+oc get clusterversion
+----
+
+クラスターのバージョンとアップデートチャネルが表示されます。準備完了です。
+
+== このワークショップについて
+
+どのような運用チームも、Kubernetes において同じ壁に突き当たります：
+
+- クラスターは稼働しているが、認証は誰が管理するのか？
+- 誰かが誤って削除したネームスペースをどのようにバックアップするのか？
+- 午前2時に Pod がクラッシュし、誰もどこを確認すべきか分からない場合はどうすればよいか？
+
+このワークショップでは、ハンズオン演習を通じてそれらの疑問に答えることができます。障害を発生させてそれを修復し、実際の障害モードを診断し、本番環境のセキュリティを設定し、何か問題が発生した際に OpenShift がどのように見えるか（そしてどれほど迅速に復旧できるか）を確認します。
+
+=== ワークショップインターフェース
+
+ワークショップは、以下のパネルで構成される分割パネル形式のインターフェースで実行されます：
+
+* **左パネル** - 指示（今読んでいる内容）
+* **右パネル** - クラスターツールを備えたタブ付きワークスペース
+* **ドラッグ可能な区切り線** - パネル間の境界線をドラッグしてサイズを変更可能
+
+image::showroom-tabs.png[Showroom interface showing tabs for OCP Console, Terminal, RHACS, ArgoCD, and Developer Hub, link=self, window=blank]
+[cols="1,3"]
+|===
+|タブ |説明
+
+|**OCP Console**
+|OpenShift Web コンソール - クラスター管理、モニタリングダッシュボード、トラブルシューティング。
+
+|**Terminal**
+|クラスターにあらかじめ接続されている Web ベースのターミナル。ローカルでのセットアップを必要とせず、`oc` コマンドを直接実行可能。
+
+|**RHACS**
+|Red Hat Advanced Cluster Security - 脆弱性スキャン、コンプライアンス、実行時セキュリティ。
+
+|**ArgoCD**
+|OpenShift GitOps - GitOps の原則を使用した継続的デリバリー。
+
+|**Developer Hub**
+|Red Hat Developer Hub - ソフトウェアカタログとセルフサービステンプレートを備えた開発者ポータル。
+|===
+
+TIP: ハイライトされたコマンドブロックは**クリック可能**です。クリックすると「Terminal」タブに切り替わり、自動的に実行されます。
+
+=== モジュール
+
+[NOTE]
+====
+**このワークショップはモジュール式です。** セッションには特定のモジュールセットが含まれており、**左側のナビゲーション**にあるモジュールのみが利用可能です。完全なカタログの構成は以下のとおりです：
+====
+
+[cols="1,3"]
+|===
+|領域 |行うこと
+
+|**プラットフォームの基礎**
+|クラスターの健全性を検証し、etcd メトリクスを確認し、アプリをデプロイして 30 秒で公開する
+
+|**アプリケーションの運用**
+|ワークロードをデプロイし、意図的に Readiness プローブを失敗させ、実際の負荷下で Horizontal Pod Autoscaler (HPA) を使用してスケーリングし、ネットワークポリシーを設定する
+
+|**アイデンティティとアクセス**
+|LDAP および OIDC 認証を統合し、グループを同期し、異なるユーザーとしてログインして RBAC をテストする
+
+|**Day 2 運用**
+|アラートルールを作成し、ロギングをセットアップし、分散トレーシングを設定し、VPA でワークロードを適正規模化する
+
+|**高度な機能**
+|コンテナと並行して VM を実行しライブマイグレーションを行い、ACM で複数のクラスターを管理し、ACS で脆弱性をスキャンする
+
+|**開発者の生産性**
+|Developer Hub にアプリケーションを登録し、ゴールデンパステンプレートが運用チームへのチケットをセルフサービスへ置き換える様子を確認する
+|===
+
+== プラットフォームの探索
+
+image::diagrams/01_platform_architecture.png[OpenShift Platform Architecture, align=center, link=self, window=blank]
+お使いのクラスターは、モニタリング、コンテナレジストリ、Ingress ルーティング、Web コンソールをあらかじめ統合した状態で稼働しています。何が含まれているか確認してみましょう。
+
+=== ステップ 1: 管理者コンソールへのアクセス
+
+OpenShift Web コンソールは、クラスター全体の一貫したビューを提供します。
+
+image::ocp-console-overview.png[OpenShift Administrator Console Overview, link=self, window=blank]
+コンソールへは2つの方法でアクセスできます：
+
+* **OCP Console タブ** - このワークショップの上部にある **OCP Console** タブをクリックします。コンソールはワークショップのインターフェースに直接埋め込まれているため、ウィンドウを切り替えることなく手順を進めることができます。
+* **別のブラウザタブ** - フルスクリーンでの体験を希望する場合は、以下の URL をクリックして別のブラウザタブでコンソールを開くことができます：
+{openshift_cluster_console_url}[window=blank]
+
+NOTE: 新しいタブで URL を開くには、URL を Ctrl + クリック（Mac では Cmd + クリック）します。
+
+TIP: 認証エラーが表示された場合は、**Try Again** をクリックするか、上部のタブを再読み込みして再試行してください。
+
+管理者ログイン認証情報：
+
+[cols="1,1"]
+|===
+| *ユーザー名:* | {openshift_cluster_admin_username}
+| *パスワード:* | {openshift_cluster_admin_password}
+|===
+
+=== ステップ 2: 管理者パースペクティブへの切り替え
+
+コンソールの左上隅に、パースペクティブ切り替えドロップダウンがあります。ドロップダウンをクリックし、**Administrator**（管理者）を選択します。
+
+=== ステップ 3: ダッシュボードの概要
+
+管理者パースペクティブに切り替えると、**Home → Overview** に **Overview**（概要）ダッシュボードが表示されます。
+
+image::ocp-dashboard-overview.png[OpenShift Administrator Dashboard Overview, link=self, window=blank]
+**注目すべき主要セクション：**
+
+1. **Cluster Status** - 一目で確認できる全体の健全性
+2. **Cluster Utilization** - CPU、メモリ、ストレージのメトリクス
+3. **Cluster Inventory** - ノード数、Pod 数など
+4. **Activity** - 最近のイベントとアラート
+
+この単一のダッシュボードにより、クラスターの健全性、使用率、インベントリ、および最近のイベントをすべて1つのビューで確認でき、セットアップは一切不要です。
+
+== プラットフォーム機能
+
+image::diagrams/01_control_plane.png[Control Plane Responsibilities, 300, align=center, link=self, window=blank]
+以下に示すモニタリング、コンテナレジストリ、Ingress ルーティングのすべては、誰かがログインする前からすでに稼働していました。それを確認してみましょう。
+
+=== モニタリング
+
+このクラスターに Prometheus をインストールした人はいません。すでに稼働しています。
+
+**Prometheus の確認 (CLI)**
+
+[source,bash,role="execute"]
+----
+oc get pods -n openshift-monitoring | grep prometheus
+----
+
+Prometheus の Pod がすでに実行中であることが確認できます（出力の一部を省略）：
+
+----
+prometheus-k8s-0                                        6/6     Running   0          55m
+prometheus-k8s-1                                        6/6     Running   0          55m
+prometheus-operator-admission-webhook-c9f987dd7-bld9f   1/1     Running   0          71m
+prometheus-operator-admission-webhook-c9f987dd7-h4jtc   1/1     Running   0          71m
+prometheus-operator-bb6c949f9-6rpnl                     2/2     Running   0          66m
+----
+
+**メトリクスへのアクセス (コンソール)**
+
+1. コンソールで **Observe → Dashboards** に移動します
+2. **Dashboard** というラベルのドロップダウンをクリックします（デフォルトで「API Performance」と表示されている場合があります）
+3. ドロップダウンから **Kubernetes / Compute Resources / Cluster** を選択します
+4. リアルタイムのメトリクスが表示されます：
+   - CPU 使用率 (CPU Utilisation)
+   - メモリ使用率 (Memory Utilisation)
+   - ネットワーク I/O (Network I/O)
+   - ファイルシステム I/O (Filesystem I/O)
+
+image::observe-cluster-metrics-dashboard.png[Kubernetes Cluster Metrics Dashboard, link=self, window=blank]
+**構成は一切不要です。** これらは組み込まれています。
+
+**Prometheus へのクエリ (応用)**
+
+1. **Observe → Metrics** に移動します
+2. 以下の PromQL クエリを試してみます：
++
+[source,role="copypaste"]
+----
+sum(rate(container_cpu_usage_seconds_total[5m])) by (namespace)
+----
++
+3. **Run Queries** をクリックします
+
+ネームスペースごとに分類された CPU 使用率が表示されます。これは、どのネームスペースが最も多くの CPU を消費しているかを確認するのに便利な方法です。
+
+NOTE: どのネームスペースが最も多く CPU を消費しているか確認してください。`openshift-monitoring` と `openshift-etcd` は、クラスター自体のインフラストラクチャを実行しているため、通常は上位になります。
+
+これらすべては、クラスターが起動した瞬間から利用可能でした。
+
+image::prometheus-cpu-by-namespace-query.png[Prometheus Query Results - CPU by Namespace, link=self, window=blank]
+=== コンテナレジストリ
+
+誰かがイメージレジストリをセットアップしたでしょうか？確認してみましょう：
+
+[source,bash,role="execute"]
+----
+oc get pods -n openshift-image-registry
+----
+
+出力（一部省略）：
+
+----
+NAME                                               READY   STATUS    RESTARTS      AGE
+cluster-image-registry-operator-86c45576b9-v8j48   1/1     Running   1 (73m ago)   89m
+image-registry-5cd768f9b5-nnrx5                    1/1     Running   0             72m
+image-registry-5cd768f9b5-pcnqk                    1/1     Running   0             72m
+node-ca-2487m                                      1/1     Running   0             72m
+node-ca-5lh4f                                      1/1     Running   0             72m
+...
+----
+
+認証、高可用性レプリカ、ストレージが設定された状態で、すでに稼働しています。誰もインストールしていません。
+
+**イメージストリームの表示**
+
+イメージストリームは、レジストリ URL をハードコードすることなくコンテナイメージを指し示す OpenShift の方法です。イメージが更新されると、ビルドやデプロイメントが自動的にその変更を取り込むことができます。
+
+[source,bash,role="execute"]
+----
+oc get imagestreams -n openshift
+----
+
+事前にロードされたビルダーイメージが表示されます（出力の一部を省略）：
+
+----
+NAME                   IMAGE REPOSITORY                                                     TAGS
+cli                    image-registry.openshift-image-registry.svc:5000/openshift/cli      latest
+dotnet                 image-registry.openshift-image-registry.svc:5000/openshift/dotnet   6.0,8.0,9.0,6.0-ubi8,8.0-ubi8,9.0-ubi8...
+nodejs                 image-registry.openshift-image-registry.svc:5000/openshift/nodejs   20-minimal-ubi8,20-minimal-ubi9,20-ubi8...
+python                 image-registry.openshift-image-registry.svc:5000/openshift/python   3.11-ubi8,3.11-ubi9,3.12-minimal-ubi10...
+----
+
+これらは**すぐに使用可能**です。Docker Hub のレート制限も外部依存関係もありません。
+
+=== ルーティング
+
+Ingress についても同じことが言えます。すでにそこに存在します。確認してみましょう：
+
+[source,bash,role="execute"]
+----
+oc get routes -A | head -10
+----
+
+Route（OpenShift の Ingress 抽象化）が表示されます（出力の一部を省略）：
+
+----
+NAMESPACE                  NAME                  HOST/PORT
+open-cluster-management    acm-cli-downloads     acm-cli-downloads.apps.cluster...
+openshift-authentication   oauth-openshift       oauth-openshift.apps.cluster...
+openshift-console          console               console-openshift-console.apps.cluster...
+openshift-console          downloads             downloads-openshift-console.apps.cluster...
+----
+
+Route により、自動 TLS 証明書と DNS を備えた HAProxy ベースの Ingress が提供されます。好みに応じて、OpenShift は標準の Kubernetes `Ingress` リソースもサポートします。
+
+**試してみましょう：30 秒でデプロイと公開を実行**
+
+何もない状態から、公開 URL を持つ稼働中のアプリをどれほど速く作成できるでしょうか？3つのコマンドで実行できます：
+
+[source,bash,role="execute"]
+----
+oc new-project quick-demo
+oc new-app --name=hello --image=registry.access.redhat.com/ubi9/httpd-24
+oc create route edge hello --service=hello
+----
+
+URL を取得してテストします：
+
+[source,bash,role="execute"]
+----
+curl -sk https://$(oc get route hello -n quick-demo -o jsonpath='{.spec.host}') | grep title
+----
+
+httpd テストページの HTML が表示されるはずです。サービス、TLS 終端された Route、および自動 DNS を備えたデプロイ済みアプリが、わずか 3 つのコマンドで完了しました。
+
+クリーンアップ（次の手順に進めるようにバックグラウンドで実行されます）：
+
+[source,bash,role="execute"]
+----
+oc delete project quick-demo &>/dev/null & disown
+----
+
+== クラスター管理
+
+=== ノード
+
+動作している基盤環境を確認してみましょう：
+
+[source,bash,role="execute"]
+----
+oc get nodes
+----
+
+お使いの環境では**コンパクトクラスター**が使用されています。コントロールプレーンとワーカーの両方の役割を果たす 3 つのノードで構成されています：
+
+----
+NAME                            STATUS   ROLES                         AGE   VERSION
+control-plane-cluster-xxxxx-1   Ready    control-plane,master,worker   20h   v1.33.6
+control-plane-cluster-xxxxx-2   Ready    control-plane,master,worker   20h   v1.33.6
+control-plane-cluster-xxxxx-3   Ready    control-plane,master,worker   20h   v1.33.6
+----
+
+NOTE: ノード名とノード数はデプロイメントによって異なります。本番環境のクラスターでは通常、独立したコントロールプレーンノードとワーカーノードが存在します。このワークショップでは、すべてのノードが両方の役割を果たすコンパクトなトポロジーを使用します。
+
+**ノードの詳細確認 (コンソール)**
+
+1. **Compute → Nodes** に移動します
++
+image::compute-nodes-menu.png[Compute menu showing Nodes option, link=self, window=blank]
++
+2. 任意のノードをクリックします
+3. **Overview** タブには、即座に以下が表示されます：
+   - **Status** - ノードが正常かを示し、問題があればフラグを立てます。このワークショップクラスターでは、CPU とメモリのオーバーコミットの警告が表示されます。これは、Pod の**リミット（制限）**がノードの容量を超えていることを意味しますが、ノードが問題に直面していることを意味するわけではありません。実際の使用量と利用可能な容量を比較するには、以下の **Utilization** セクションを確認してください。実際の使用量が容量内に十分収まっている場合は、オーバーコミットが発生していても問題ありません。また、発生中のアラートも表示されますが、多くのオペレーターがインストールされているワークショップクラスターでは、これは予期される動作です。
++
+ただし、以下の **Utilization グラフ** を確認すると、実際の CPU およびメモリ使用率は容量内に十分収まっています。違いを理解することが重要です。**リクエスト（保証されるリソース）**はノードに収まっており、**リミット（Pod が一時的に拡大できる上限）**は収まっていません。実際には、すべての Pod が同時にリミットまでスパイクすることは、特にワークショップ環境ではめったにありません。本番環境では、リミットを適正サイズにするか、ノードを追加するか、ワークロードが同時にスパイクしないのであればオーバーコミットを容認するかのいずれかを選択します。
+   - **Utilization グラフ** - 時間経過に伴う CPU、メモリ、ファイルシステム、およびネットワーク。 「利用可能（available）」な容量と実際の使用量を比較することで、理論上の上限ではなく、実際の使用状況を把握できます。
+   - **Pod 数** - このノードで実行されている Pod の数。
+4. **Pods** タブをクリックすると、そのノード上のすべての Pod が、それぞれの CPU およびメモリ使用量とともに表示されます。
+
+アクティブなアラート、使用率グラフ、Pod ごとのリソース使用量はすべて 1 つのコンソールビューに収まっており、ノードへの SSH 接続は不要です。
+
+image::nodes-console-view.png[Nodes Console View, link=self, window=blank]
+=== インフラストラクチャ管理
+
+**MachineSet - 自動化されたインフラストラクチャのスケーリング**
+
+OpenShift は **MachineSet** を使用してインフラストラクチャのスケーリングを自動化します。クラウドプラットフォーム（AWS、Azure、GCP）では、MachineSet がアベイラビリティゾーン全体でワーカーノードを管理します。マシンを手動でプロビジョニングするのではなく、レプリカ数を変更するだけでスケールアップできます。
+
+NOTE: ACM がインストールされている場合、`machinesets` は 2 つの API グループ（Cluster API と OpenShift Machine API）に存在します。OpenShift の Machine API をターゲットにするには、完全なリソース名 `machinesets.machine.openshift.io` を使用します。
+
+[source,bash,role="execute"]
+----
+oc get machinesets.machine.openshift.io -n openshift-machine-api
+----
+
+お使いのコンパクトクラスターには、0 にスケールされた単一の MachineSet が存在します。3 つのノードすべてがコントロールプレーンとワーカーの両方として機能するため、独立したワーカーマシンは不要です：
+
+----
+NAME                           DESIRED   CURRENT   READY   AVAILABLE   AGE
+cluster-xxxxx-worker-0         0         0                             20h
+----
+
+本番のクラウドデプロイメントでは、スケールアップまたはスケールダウンが可能なアクティブなワーカーレプリカを持つ複数の MachineSet（アベイラビリティゾーンごとに1つ）が表示されます。
+
+これはコンソールの **Compute -> MachineSets** で確認できます：
+
+image::machinesets-console.png[MachineSets view showing worker MachineSet with 0 of 0 machines on compact cluster, link=self, window=blank]
+本番クラスターでは、このビューに各 MachineSet のマシン数、インスタンスタイプ、CPU、およびメモリが表示され、希望する数を編集することでコンソールから直接スケーリングできます。
+
+マシンリソースを表示することもできます：
+
+[source,bash,role="execute"]
+----
+oc get machines.machine.openshift.io -n openshift-machine-api
+----
+
+これにより、OpenShift が管理している基礎となるコンピュートインスタンスが表示されます。
+
+=== ワーカーのスケーリング
+
+別のワーカーノードを追加するには、MachineSet をスケーリングするだけです：
+
+WARNING: このコマンドは実行しないでください。例として示されているだけです。このワークショップ環境には、スケーリングに使用できる予備のホストがありません。
+
+[source,bash]
+----
+# 例 - ゾーンのワーカーを 0 から 1 にスケーリング
+oc scale machineset.machine.openshift.io <machineset-name> --replicas=1 -n openshift-machine-api
+----
+
+OpenShift はコンピュートインスタンスを自動的にプロビジョニングして構成し、クラスターに参加させます。インフラストラクチャをスケーリングするための単一のコマンドです。
+
+NOTE: このワークショップ環境は予備ホストのないベアメタル上で動作しているため、スケーリングはライブの演習ではなく例として示されています。クラウドプラットフォーム（AWS、Azure、GCP）では、Machine API が新しいインスタンスを自動的にプロビジョニングします。
+
+=== Over-the-Air アップグレード
+
+クラスターのバージョンを確認します：
+
+[source,bash,role="execute"]
+----
+oc get clusterversion
+----
+
+出力：
+
+----
+NAME      VERSION   AVAILABLE   PROGRESSING   SINCE   STATUS
+version   4.x       True        False         32m     Cluster version is 4.x
+----
+
+**利用可能なアップグレードの表示 (コンソール)**
+
+1. **Administration → Cluster Settings** に移動します
++
+image::cluster-settings-details.png[Cluster Settings Details Tab, link=self, window=blank]
++
+2. （利用可能な場合は） **Select a version** ボタンをクリックします
+3. 利用可能なアップグレードパスを確認します
+
+NOTE: クラスターに **Update status: Up to date**（アップデートステータス：最新）と表示されている場合、**Select a version** ボタンは表示されません。これは、クラスターがそのアップデートチャネルで利用可能な最新バージョンをすでに実行していることを意味します。
+
+image::cluster-upgrade-versions.png[Available Upgrade Versions,width=600, link=self, window=blank]
+OpenShift はアップグレードを自動的に処理します：
+
+- コントロールプレーンのローリングアップグレード
+- ワーカーノードの自動更新
+- ゼロダウンタイムでのアップグレード
+
+=== オペレーターエコシステム
+
+クラスターに何かを追加する必要がありますか？現在利用可能なオペレーターの数を確認してみましょう：
+
+[source,bash,role="execute"]
+----
+oc get packagemanifests -n openshift-marketplace | wc -l
+----
+
+Red Hat、認定パートナー、コミュニティのオプションが混ざり合った何百ものオペレーターがすぐにインストールできる状態になっています。
+
+**ソフトウェアカタログの探索 (コンソール)**
+
+1. **Ecosystem → Software Catalog** に移動します
+2. ドロップダウンからプロジェクトを選択する必要がある場合があります。まだ選択されていない場合は、**default** を選択してください
+3. 左側にカテゴリが配置された統合ソフトウェアカタログが表示されます：
+   - **AI/Machine Learning** - Red Hat OpenShift AI、Open Data Hub
+   - **CI/CD** - Red Hat OpenShift GitOps、Red Hat OpenShift Pipelines
+   - **Database** - Red Hat AMQ Streams (Kafka)
+   - **Security** - Red Hat Advanced Cluster Security
+   - **Storage** - Red Hat OpenShift Data Foundation
+   - **Integration & Delivery** - Red Hat Integration、Red Hat Service Mesh、Red Hat Serverless
+   - その他多数...
+4. **Type** でフィルタリングし、**Operators** を選択して、利用可能なオペレーターの完全なリストを表示します
+5. 任意のオペレータータイルをクリックして詳細を参照してみてください。これは探索目的ですので、何もインストールする必要はありません
+
+image::software-catalog-operators.png[Software Catalog filtered to Operators showing available operator tiles, link=self, window=blank]
+タイルを参照し、興味のあるものをクリックしてみてください。これはあなたのクラスターですので、自由に探索してください。
+
+== 次のステップ
+
+モニタリング、レジストリ、ルーティング、ノード管理、アップグレード、すぐにインストールできるオペレーターのカタログなど、初期状態（Out-of-the-box）で稼働しているものを確認しました。いずれもセットアップを必要としませんでした。
+
+このワークショップの残りの部分では、さらに深く掘り下げていきます。ナビゲーションから次のモジュールを選択して、ハンズオンで作業を開始してください。
