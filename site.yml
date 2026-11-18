@@ -31,9 +31,9 @@ antora:
 output:
   dir: ./www
 
-# Module attributes retained for compatibility with the showroom workload.
-# In production, these are injected via user_data.
-# Workshop navigation is fixed in nav.adoc and does not depend on these flags.
+# Module attributes for ifeval conditionals in nav.adoc
+# In production, these are injected by the showroom workload via user_data
+# For local preview, enable all modules by setting to "true"
 asciidoc:
   attributes:
     toclevels: 2

@@ -1,11 +1,3 @@
-今回のハンズオンでは、以下を行います。
-必要に応じてLightspeed機能を活用できます。
-
-. link:content/modules/ROOT/pages/index.adoc[OpenShift概要とセットアップ]
-. link:content/modules/ROOT/pages/02-app-mgmt.adoc[Application Management]
-. link:content/modules/ROOT/pages/03-ingress-loadbalancing.adoc[Ingress & Load Balancing]
-. link:content/modules/ROOT/pages/04-network-security.adoc[Network Security]
-
 == このリポジトリについて
 OpenShift Ops Day Roadshow コンテンツの日本語訳＋カスタム版のリポジトリです。
 
@@ -14,7 +6,7 @@ OpenShift Ops Day Roadshow コンテンツの日本語訳＋カスタム版の�
 
 [source,bash,role=execute,subs="attributes"]
 ----
-curl -sSL https://raw.githubusercontent.com/loungeplus/openshift-ops/refs/heads/261120/translation.sh | bash
+curl -sSL https://raw.githubusercontent.com/loungeplus/openshift-ops/refs/heads/main/translation.sh | bash
 ----
 
 
@@ -24,7 +16,7 @@ Showroom content for the OpenShift Ops Day Roadshow, covering Day 2 operations f
 
 == Workshop Overview
 
-A comprehensive modular workshop for OpenShift administrators. This edition uses the four modules listed at the beginning of this README; the full module catalog is retained below for reference.
+A comprehensive modular workshop for OpenShift administrators. Modules are selectable at catalog order time so instructors can tailor the content to their audience.
 
 === Available Modules
 
@@ -63,15 +55,14 @@ A comprehensive modular workshop for OpenShift administrators. This edition uses
 
 == Module Selection
 
-link:content/modules/ROOT/nav.adoc[nav.adoc] が左メニューと章順序の定義です。
-`content/antora.yml` の `page-pagination: true` により、各章末尾の「前へ／次へ」もこの順序で自動生成されます。
-最初の章には「前へ」、最後の章には「次へ」は表示されません。
+Modules are selectable at catalog order time. The navigation dynamically shows/hides content based on which modules are enabled.
 
-`module_enable_*` の値にかかわらず、左メニューには冒頭の4章だけを表示します。
-「まとめ」は章順序に残し、Network Security の章末の「次へ」から進めます。
-左メニューの「まとめ」は `content/supplemental-ui/css/site-extra.css` で非表示にしています。
-ほかの章のソースは保持し、メニューからのみ非表示にしています。直接URLを指定した場合は参照できます。
-環境側のカタログパラメーターによる Operator やワークロードのデプロイ設定は引き続き独立して管理します。
+Catalog parameters (`module_enable_*`) control both:
+
+* Which operators/workloads get deployed
+* Which content appears in the workshop navigation
+
+See link:content/modules/ROOT/nav.adoc[nav.adoc] for the conditional navigation logic using `ifeval`.
 
 == Local Development
 
