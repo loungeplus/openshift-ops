@@ -155,7 +155,7 @@ NOTE: Lightspeed の回答は AI モデルによって生成されるため、�
 たとえば、次のように質問することから始めることができます：
 
 [quote]
-What's the difference between a Deployment and a StatefulSet?
+Deployment と StatefulSet の違いは何ですか？
 
 OpenShift Lightspeed は、ベクターデータベースからドキュメントの最も関連性の高いセクションを検索します。この情報はクエリとともにモデルに送信され、正確な回答を提供できるようになります。
 
@@ -171,7 +171,7 @@ OpenShift Lightspeed は現在の会話のコンテキストを維持するた�
 たとえば、Deployment が何であるかがわかったので、OpenShift Lightspeed に作成を依頼してみましょう：
 
 [quote]
-Can you generate a YAML for a Deployment using the image red.ht/ols:2026?
+イメージ red.ht/ols:2026 を使用する Deployment の YAML を生成してもらえますか？
 
 OpenShift Lightspeed はガイダンスを提供し、要求されたリソースを作成しますが、それらのリソースをクラスターに直接適用することはありません。これらをコピーして手動で適用できます：
 
@@ -199,7 +199,7 @@ oc describe pod broken-pod -n lightspeed-demo
 OpenShift Lightspeed のインターフェースで、**ゴミ箱アイコン** (チャットパネルの右上隅、左側) をクリックして会話を消去します。これで、次のように質問できます：
 
 [quote]
-Show me the pods in the lightspeed-demo namespace
+lightspeed-demo ネームスペース内の Pod を表示してください。
 
 モデルは、この情報を取得するために MCP サーバーによって提供されるツールの 1 つである `pods_list_in_namespace` を使用した可能性が高いです。ツールをクリックすると、質問の回答に使用されたツールの出力を表示できます。
 
@@ -214,7 +214,7 @@ image::ols-attachments.png[OpenShift Lightspeed attachments menu, link=self, win
 添付できたら、次のように尋ねてみてください：
 
 [quote]
-What's wrong in this pod?
+この Pod にどのような問題がありますか？
 
 OpenShift Lightspeed は Pod 仕様を分析して問題を特定します（この場合は無効なノードセレクター）。さらに、問題を解決するのに役立つソリューションを提案する可能性が高いです。
 
