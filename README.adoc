@@ -5,6 +5,7 @@
 . link:content/modules/ROOT/pages/02-app-mgmt.adoc[Application Management]
 . link:content/modules/ROOT/pages/03-ingress-loadbalancing.adoc[Ingress & Load Balancing]
 . link:content/modules/ROOT/pages/04-network-security.adoc[Network Security]
+. link:content/modules/ROOT/pages/13-openshift-lightspeed.adoc[Lightspeed]
 
 == このリポジトリについて
 OpenShift Ops Day Roadshow コンテンツの日本語訳＋カスタム版のリポジトリです。
