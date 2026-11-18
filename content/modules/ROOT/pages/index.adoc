@@ -31,7 +31,38 @@ oc get nodes
 oc get clusterversion
 ----
 
-クラスターのバージョンとアップデートチャネルが表示されます。準備完了です。
+クラスターのバージョンとアップデートチャネルが表示されます。
+
+
+次に、OpenShift Lightspeed を有効にするための OLSConfig を作成します。
+
+[source,bash,subs="+macros,+attributes",role=execute]
+----
+oc apply -f - <<EOF
+apiVersion: ols.openshift.io/v1alpha1
+kind: OLSConfig
+metadata:
+  name: cluster
+spec:
+  llm:
+    providers:
+      - name: Azure
+        type: azure_openai
+        url: 'https://llm-gpt4-lightspeed.openai.azure.com/'
+        deploymentName: gpt-4
+        credentialsSecretRef:
+          name: azure-api-keys
+        models:
+          - name: gpt-4
+  ols:
+    defaultModel: gpt-4
+    defaultProvider: Azure
+    logLevel: DEBUG
+    introspectionEnabled: true
+EOF
+----
+
+数分後にLightspeedが利用可能になります。これで準備完了です。
 
 == このワークショップについて
 
