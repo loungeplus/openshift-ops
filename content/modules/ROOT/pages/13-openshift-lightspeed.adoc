@@ -171,7 +171,7 @@ OpenShift Lightspeed は現在の会話のコンテキストを維持するた�
 たとえば、Deployment が何であるかがわかったので、OpenShift Lightspeed に作成を依頼してみましょう：
 
 [quote]
-イメージ red.ht/ols:2026 を使用する Deployment の YAML を生成してもらえますか？
+コンテナイメージ `red.ht/ols:2026` を使用する Deployment の YAML を生成してもらえますか？
 
 OpenShift Lightspeed はガイダンスを提供し、要求されたリソースを作成しますが、それらのリソースをクラスターに直接適用することはありません。これらをコピーして手動で適用できます：
 
