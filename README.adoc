@@ -67,8 +67,9 @@ link:content/modules/ROOT/nav.adoc[nav.adoc] が左メニューと章順序の�
 `content/antora.yml` の `page-pagination: true` により、各章末尾の「前へ／次へ」もこの順序で自動生成されます。
 最初の章には「前へ」、最後の章には「次へ」は表示されません。
 
-`module_enable_*` の値にかかわらず、左メニューには冒頭の4章だけを表示します。
-「まとめ」は章順序に残し、Network Security の章末の「次へ」から進めます。
+`module_enable_*` の値にかかわらず、左メニューには冒頭の4章と「Lightspeed」を表示します。
+Network Security と「まとめ」の間に link:content/modules/ROOT/pages/13-openshift-lightspeed.adoc[Lightspeed] を配置しています。
+「まとめ」は章順序に残し、Lightspeed の章末の「次へ」から進めます。
 左メニューの「まとめ」は `content/supplemental-ui/css/site-extra.css` で非表示にしています。
 ほかの章のソースは保持し、メニューからのみ非表示にしています。直接URLを指定した場合は参照できます。
 環境側のカタログパラメーターによる Operator やワークロードのデプロイ設定は引き続き独立して管理します。

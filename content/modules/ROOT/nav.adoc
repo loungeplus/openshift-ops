@@ -1,8 +1,9 @@
 // 今回のハンズオンで使用する章。左メニューと章末の前へ／次へはこの順序に従います。
-// module_enable_* に関係なく、4章とまとめを章順序に含めます。
+// module_enable_* に関係なく、4章、Lightspeed、まとめを章順序に含めます。
 // まとめは章末リンク用に残し、左メニューでは site-extra.css で非表示にします。
 * xref:index.adoc[OpenShift概要とセットアップ]
 * xref:02-app-mgmt.adoc[アプリケーション管理]
 * xref:03-ingress-loadbalancing.adoc[Ingress とロードバランシング]
 * xref:04-network-security.adoc[ネットワークセキュリティ]
+* xref:13-openshift-lightspeed.adoc[Lightspeed]
 * xref:99-conclusion.adoc[まとめ]
