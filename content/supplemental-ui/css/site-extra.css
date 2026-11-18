@@ -33,3 +33,8 @@ video {
     width: 100%;
     background-color: #131313;
 }
+
+/* Keep conclusion in pagination while hiding it from the sidebar navigation. */
+.nav-menu li:has(> a[href$="99-conclusion.html"]) {
+    display: none;
+}
