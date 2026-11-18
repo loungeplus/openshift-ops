@@ -53,7 +53,7 @@ image::ols-switch-namespace.png[Switch to openshift-lightspeed namespace, link=s
 oc get secret azure-api-keys -n openshift-lightspeed
 ----
 
-次に、OpenShift Lightspeed を有効にするための OLSConfig を作成します：
+次に、OpenShift Lightspeed を有効にするための OLSConfig を作成します：（本ワークショップでは、冒頭で実施済ですので無視してください）
 
 [source,bash,subs="+macros,+attributes",role=execute]
 ----
