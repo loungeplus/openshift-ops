@@ -3,9 +3,8 @@
 # Injects workshop environment variables into Antora configuration
 # Called by ocp4-workload-days-ops-track after showroom deployment
 #
-# Uses ifeval conditionals in nav.adoc:
-#   ifeval::["{module_enable_virt}" == "true"]
-# So attributes must be set as: module_enable_virt: 'true'
+# Retains module attributes for compatibility with the showroom workload.
+# Workshop navigation is fixed in nav.adoc and does not depend on these flags.
 
 set -e
 
@@ -22,7 +21,7 @@ if [ ! -f "$SITE_FILE" ]; then
 fi
 
 # Build asciidoc attributes based on MODULE_ENABLE_* environment variables
-# These control which nav items are shown via ifeval conditionals
+# Keep these available to content independently of the fixed workshop navigation.
 
 echo "Module settings (getting started):"
 echo "  MODULE_ENABLE_INSTALL=${MODULE_ENABLE_INSTALL:-true}"
@@ -48,8 +47,7 @@ echo "  MODULE_ENABLE_ZTWIM=${MODULE_ENABLE_ZTWIM:-true}"
 echo "  MODULE_ENABLE_VAULT=${MODULE_ENABLE_VAULT:-true}"
 
 # Create attributes section for Antora
-# ifeval checks: ifeval::["{module_enable_virt}" == "true"]
-# So we set the attribute to 'true' or 'false'
+# Preserve string values ('true' or 'false') for AsciiDoc compatibility.
 ATTRS=""
 
 # Module flags
