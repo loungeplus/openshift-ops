@@ -175,7 +175,7 @@ tabs:
 UIEOF
 
 # Add RHACS tab if security module is enabled
-if [ "${MODULE_ENABLE_SECURITY:-true}" = "true" ]; then
+if [ "${MODULE_ENABLE_SECURITY:-false}" = "true" ]; then
 cat >> "$UI_CONFIG" <<UIEOF
 
   - name: RHACS
@@ -184,7 +184,7 @@ UIEOF
 fi
 
 # Add ArgoCD tab if ACM or GitOps module is enabled
-if [ "${MODULE_ENABLE_ACM:-true}" = "true" ] || [ "${MODULE_ENABLE_GITOPS:-true}" = "true" ]; then
+if [ "${MODULE_ENABLE_ACM:-false}" = "true" ] || [ "${MODULE_ENABLE_GITOPS:-true}" = "true" ]; then
 cat >> "$UI_CONFIG" <<UIEOF
 
   - name: ArgoCD
@@ -193,7 +193,7 @@ UIEOF
 fi
 
 # Add Developer Hub tab if devhub module is enabled
-if [ "${MODULE_ENABLE_DEVHUB:-true}" = "true" ]; then
+if [ "${MODULE_ENABLE_DEVHUB:-false}" = "true" ]; then
 cat >> "$UI_CONFIG" <<UIEOF
 
   - name: Developer Hub
