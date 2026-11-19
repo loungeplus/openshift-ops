@@ -4,6 +4,6 @@ for NS in `cat tempfile` ; do
     oc scale -n $NS deploy/showroom --replicas=0
     sleep 1
     echo $NS
-    oc patch -n $NS deploy/showroom --patch='{"spec":{"template":{"spec":{"containers": [{"name": "content","env": [{"name": "GIT_REPO_URL", "value": "https://github.com/loungeplus/openshift-ops"}, {"name": "GIT_REPO_REF", "value": "261120"}]}]}}}}'
+    oc patch -n $NS deploy/showroom --patch='{"spec":{"template":{"spec":{"initContainers": [{"name": "git-cloner","env": [{"name": "GIT_REPO_URL", "value": "https://github.com/loungeplus/openshift-ops"}, {"name": "GIT_REPO_REF", "value": "261120"}]}]}}}}'
     oc scale -n $NS deploy/showroom --replicas=1
 done
