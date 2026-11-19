@@ -184,7 +184,7 @@ UIEOF
 fi
 
 # Add ArgoCD tab if ACM or GitOps module is enabled
-if [ "${MODULE_ENABLE_ACM:-false}" = "true" ] || [ "${MODULE_ENABLE_GITOPS:-true}" = "true" ]; then
+if [ "${MODULE_ENABLE_ACM:-false}" = "true" ] || [ "${MODULE_ENABLE_GITOPS:-false}" = "true" ]; then
 cat >> "$UI_CONFIG" <<UIEOF
 
   - name: ArgoCD
