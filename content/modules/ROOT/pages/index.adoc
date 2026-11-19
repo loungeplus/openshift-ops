@@ -66,14 +66,6 @@ EOF
 
 == このワークショップについて
 
-どのような運用チームも、Kubernetes において同じ壁に突き当たります：
-
-- クラスターは稼働しているが、認証は誰が管理するのか？
-- 誰かが誤って削除したネームスペースをどのようにバックアップするのか？
-- 午前2時に Pod がクラッシュし、誰もどこを確認すべきか分からない場合はどうすればよいか？
-
-このワークショップでは、ハンズオン演習を通じてそれらの疑問に答えることができます。障害を発生させてそれを修復し、実際の障害モードを診断し、本番環境のセキュリティを設定し、何か問題が発生した際に OpenShift がどのように見えるか（そしてどれほど迅速に復旧できるか）を確認します。
-
 === ワークショップインターフェース
 
 ワークショップは、以下のパネルで構成される分割パネル形式のインターフェースで実行されます：
@@ -102,6 +94,12 @@ image::showroom-tabs.png[Showroom interface showing tabs for OCP Console, Termin
 |**Developer Hub**
 |Red Hat Developer Hub - ソフトウェアカタログとセルフサービステンプレートを備えた開発者ポータル。
 |===
+
+[NOTE]
+====
+**RHACS**、**ArgoCD**、**Developer Hub**については使用不可となっています。本日のワークショップは基礎的な内容に焦点をあてているため、拡張機能は非導入となっています。
+
+====
 
 TIP: ハイライトされたコマンドブロックは**クリック可能**です。クリックすると「Terminal」タブに切り替わり、自動的に実行されます。
 
@@ -186,7 +184,7 @@ prometheus-operator-bb6c949f9-6rpnl                     2/2     Running   0     
 
 **メトリクスへのアクセス (コンソール)**
 
-1. コンソールで **Observe → Dashboards** に移動します
+1. コンソールで **Observe（モニタリング） → Dashboards** に移動します
 2. **Dashboard** というラベルのドロップダウンをクリックします（デフォルトで「API Performance」と表示されている場合があります）
 3. ドロップダウンから **Kubernetes / Compute Resources / Cluster** を選択します
 4. リアルタイムのメトリクスが表示されます：
@@ -419,7 +417,7 @@ version   4.x       True        False         32m     Cluster version is 4.x
 
 **利用可能なアップグレードの表示 (コンソール)**
 
-1. **Administration → Cluster Settings** に移動します
+1. **Administration（管理） → Cluster Settings** に移動します
 +
 image::cluster-settings-details.png[Cluster Settings Details Tab, link=self, window=blank]
 +
